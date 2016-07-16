@@ -50,6 +50,9 @@
 
 #define NUM_PARAMS_REG_ENABLE_SET 2
 
+/* Unused key value to avoid interfering with active keys */
+#define KEY_FINGERPRINT 0x2ee
+
 static const char * const pctl_names[] = {
 	"fpc1020_reset_reset",
 	"fpc1020_reset_active",
@@ -457,6 +460,12 @@ static irqreturn_t fpc1020_irq_handler(int irq, void *handle)
 	}
 
 	sysfs_notify(&fpc1020->dev->kobj, NULL, dev_attr_irq.attr.name);
+
+	/* Report button input to trigger CPU boost */
+	input_report_key(fpc1020->input_dev, KEY_FINGERPRINT, 1);
+	input_sync(fpc1020->input_dev);
+	input_report_key(fpc1020->input_dev, KEY_FINGERPRINT, 0);
+	input_sync(fpc1020->input_dev);
 
 	return IRQ_HANDLED;
 }
