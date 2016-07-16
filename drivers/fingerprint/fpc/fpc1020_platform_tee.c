@@ -36,6 +36,7 @@
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/wakelock.h>
+#include <linux/input.h>
 
 #define FPC_TTW_HOLD_TIME 1000
 
@@ -49,6 +50,9 @@
 #define PWR_ON_SLEEP_MAX_US (PWR_ON_SLEEP_MIN_US + 900)
 
 #define NUM_PARAMS_REG_ENABLE_SET 2
+
+/* Unused key value to avoid interfering with active keys */
+#define KEY_FINGERPRINT 0x2ee
 
 static const char * const pctl_names[] = {
 	"fpc1020_reset_reset",
@@ -82,6 +86,7 @@ struct fpc1020_data {
 	struct mutex lock; /* To set/get exported values in sysfs */
 	bool prepared;
 	atomic_t wakeup_enabled; /* Used both in ISR and non-ISR */
+	struct input_dev *input_dev;
 };
 
 static int vreg_setup(struct fpc1020_data *fpc1020, const char *name,
@@ -445,6 +450,36 @@ static const struct attribute_group attribute_group = {
 	.attrs = attributes,
 };
 
+static int fpc1020_input_init(struct fpc1020_data *fpc1020)
+{
+	int error = 0;
+
+	fpc1020->input_dev = input_allocate_device();
+	if (!fpc1020->input_dev) {
+		dev_err(fpc1020->dev, "Input_allocate_device failed.\n");
+		error  = -ENOMEM;
+	}
+
+	if (!error) {
+		fpc1020->input_dev->name = "fpc1020";
+
+		/* Set event bits according to what events we are generating */
+		set_bit(EV_KEY, fpc1020->input_dev->evbit);
+
+		set_bit(KEY_FINGERPRINT, fpc1020->input_dev->keybit);
+
+		/* Register the input device */
+		error = input_register_device(fpc1020->input_dev);
+		if (error) {
+			dev_err(fpc1020->dev, "Input_register_device failed.\n");
+			input_free_device(fpc1020->input_dev);
+			fpc1020->input_dev = NULL;
+		}
+	}
+
+	return error;
+}
+
 static irqreturn_t fpc1020_irq_handler(int irq, void *handle)
 {
 	struct fpc1020_data *fpc1020 = handle;
@@ -457,6 +492,12 @@ static irqreturn_t fpc1020_irq_handler(int irq, void *handle)
 	}
 
 	sysfs_notify(&fpc1020->dev->kobj, NULL, dev_attr_irq.attr.name);
+
+	/* Report button input to trigger CPU boost */
+	input_report_key(fpc1020->input_dev, KEY_FINGERPRINT, 1);
+	input_sync(fpc1020->input_dev);
+	input_report_key(fpc1020->input_dev, KEY_FINGERPRINT, 0);
+	input_sync(fpc1020->input_dev);
 
 	return IRQ_HANDLED;
 }
@@ -559,6 +600,10 @@ static int fpc1020_probe(struct platform_device *pdev)
 		irqf |= IRQF_NO_SUSPEND;
 		device_init_wakeup(dev, 1);
 	}
+
+	rc = fpc1020_input_init(fpc1020);
+	if (rc)
+		goto exit;
 
 	mutex_init(&fpc1020->lock);
 	rc = devm_request_threaded_irq(dev, gpio_to_irq(fpc1020->irq_gpio),
