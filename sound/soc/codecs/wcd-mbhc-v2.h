@@ -17,6 +17,7 @@
 #include <linux/power_supply.h>
 #include "wcdcal-hwdep.h"
 
+#define WCD_BTN_TUNING_DEBUG 1
 #define TOMBAK_MBHC_NC	0
 #define TOMBAK_MBHC_NO	1
 #define WCD_MBHC_DEF_BUTTONS 8
@@ -461,6 +462,14 @@ struct wcd_mbhc {
 	struct notifier_block psy_nb;
 	struct power_supply *usb_psy;
 	struct work_struct usbc_analog_work;
+	struct delayed_work mbhc_fixup_dwork;
+	atomic_t not_fixup;
+#ifdef CONFIG_DEBUG_FS
+	struct dentry *debugfs_mbhc;
+#ifdef WCD_BTN_TUNING_DEBUG
+	struct dentry *debugfs_btn_tuning;
+#endif
+#endif
 };
 #define WCD_MBHC_CAL_SIZE(buttons, rload) ( \
 	sizeof(struct wcd_mbhc_general_cfg) + \

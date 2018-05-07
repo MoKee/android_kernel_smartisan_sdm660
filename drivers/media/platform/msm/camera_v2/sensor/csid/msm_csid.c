@@ -59,7 +59,9 @@
 #define FALSE  0
 
 #define MAX_LANE_COUNT 4
-#define CSID_TIMEOUT msecs_to_jiffies(100)
+/* Begin xiaopeng csid reset 100ms timeout fail in MTBF test 2016-01-03 */
+#define CSID_TIMEOUT msecs_to_jiffies(500)
+/* End xiaopeng csid reset 100ms timeout fail in MTBF test 2016-01-03 */
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)

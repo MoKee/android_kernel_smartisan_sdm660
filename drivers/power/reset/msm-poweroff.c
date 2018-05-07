@@ -49,6 +49,8 @@
 #define SCM_DLOAD_MINIDUMP		0X20
 #define SCM_DLOAD_BOTHDUMPS	(SCM_DLOAD_MINIDUMP | SCM_DLOAD_FULLDUMP)
 
+extern const char linux_banner[];
+
 static int restart_mode;
 static void *restart_reason;
 static bool scm_pmic_arbiter_disable_supported;
@@ -157,6 +159,7 @@ static bool get_dload_mode(void)
 	return dload_mode_enabled;
 }
 
+#ifndef _BUILD_USER
 static void enable_emergency_dload_mode(void)
 {
 	int ret;
@@ -181,6 +184,12 @@ static void enable_emergency_dload_mode(void)
 	if (ret)
 		pr_err("Failed to set secure EDLOAD mode: %d\n", ret);
 }
+#else
+static void enable_emergency_dload_mode(void)
+{
+
+}
+#endif
 
 static int dload_set(const char *val, struct kernel_param *kp)
 {
@@ -376,6 +385,7 @@ static void deassert_ps_hold(void)
 static void do_msm_restart(enum reboot_mode reboot_mode, const char *cmd)
 {
 	pr_notice("Going down for restart now\n");
+	pr_notice("%s\n",linux_banner);
 
 	msm_restart_prepare(cmd);
 
@@ -528,11 +538,18 @@ RESET_ATTR(dload_mode, 0644, show_dload_mode, store_dload_mode);
 
 RESET_ATTR(emmc_dload, 0644, show_emmc_dload, store_emmc_dload);
 
+extern ssize_t show_offline_dump(struct kobject *kobj, struct attribute *attr,char *buf);
+extern size_t store_offline_dump(struct kobject *kobj, struct attribute *attr,const char *buf, size_t count);
+
+RESET_ATTR(offline_dump, 0644, show_offline_dump, store_offline_dump);
+
+
 static struct attribute *reset_attrs[] = {
 	&reset_attr_emmc_dload.attr,
 #ifdef CONFIG_QCOM_MINIDUMP
 	&reset_attr_dload_mode.attr,
 #endif
+	&reset_attr_offline_dump.attr,
 	NULL
 };
 

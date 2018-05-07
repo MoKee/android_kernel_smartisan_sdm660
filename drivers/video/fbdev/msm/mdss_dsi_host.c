@@ -2224,6 +2224,7 @@ static int mdss_dsi_cmd_dma_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 			pr_warn("%s: dma tx done but irq not triggered\n",
 				__func__);
 		} else {
+			MDSS_XLOG(0x111);
 			ret = -ETIMEDOUT;
 		}
 	}
@@ -2480,8 +2481,10 @@ void mdss_dsi_wait4video_done(struct mdss_dsi_ctrl_pdata *ctrl)
 	MIPI_OUTP((ctrl->ctrl_base) + 0x0110, data);
 	wmb(); /* ensure interrupt is enabled */
 
+	MDSS_XLOG(0x55555);
 	wait_for_completion_timeout(&ctrl->video_comp,
-			msecs_to_jiffies(VSYNC_PERIOD * 4));
+			msecs_to_jiffies(VSYNC_PERIOD * 13));
+	MDSS_XLOG(0x66666);
 
 	data = MIPI_INP((ctrl->ctrl_base) + 0x0110);
 	data &= DSI_INTR_TOTAL_MASK;

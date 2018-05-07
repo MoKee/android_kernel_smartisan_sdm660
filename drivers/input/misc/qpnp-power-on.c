@@ -844,14 +844,15 @@ qpnp_pon_input_dispatch(struct qpnp_pon *pon, u32 pon_type)
 		return -EINVAL;
 	}
 
-	pr_debug("PMIC input: code=%d, sts=0x%hhx\n",
-					cfg->key_code, pon_rt_sts);
 	key_status = pon_rt_sts & pon_rt_bit;
 
 	if (pon->kpdpwr_dbc_enable && cfg->pon_type == PON_KPDPWR) {
 		if (!key_status)
 			pon->kpdpwr_last_release_time = ktime_get();
 	}
+
+	pr_info("PMIC EV_KEY: code=%d, sts=0x%hhx, pon_type=%d\n",
+					cfg->key_code, key_status, cfg->pon_type);
 
 	/*
 	 * simulate press event in case release event occurred
@@ -2358,6 +2359,9 @@ static int qpnp_pon_probe(struct platform_device *pdev)
 	/* config whether store the hard reset reason */
 	pon->store_hard_reset_reason = of_property_read_bool(pdev->dev.of_node,
 					"qcom,store-hard-reset-reason");
+
+	/* Determine volum_up initial status */
+	qpnp_pon_input_dispatch(pon, PON_RESIN);
 
 	qpnp_pon_debugfs_init(pdev);
 	return 0;

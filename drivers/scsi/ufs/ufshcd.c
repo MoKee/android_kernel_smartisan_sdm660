@@ -43,12 +43,17 @@
 #include <linux/nls.h>
 #include <linux/of.h>
 #include <linux/blkdev.h>
+#include <linux/fs.h>
 
 #include "ufshcd.h"
 #include "ufshci.h"
 #include "ufs_quirks.h"
 #include "ufs-debugfs.h"
 #include "ufs-qcom.h"
+#include <soc/qcom/boot_stats.h>
+
+#define HAS_A_UFS 0x11
+#define HAS_NO_UFS 0x01
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ufs.h>
@@ -831,8 +836,10 @@ static inline u32 ufshcd_get_intr_mask(struct ufs_hba *hba)
  */
 static inline u32 ufshcd_get_ufs_version(struct ufs_hba *hba)
 {
+#if 0
 	if (hba->quirks & UFSHCD_QUIRK_BROKEN_UFS_HCI_VERSION)
 		return ufshcd_vops_get_ufs_hci_version(hba);
+#endif
 
 	return ufshcd_readl(hba, REG_UFS_VERSION);
 }
@@ -2135,6 +2142,33 @@ static void ufshcd_clk_scaling_update_busy(struct ufs_hba *hba)
 	}
 }
 
+// UFS read/write command log
+static void ufshcd_rw_log(struct ufs_hba *hba, unsigned int tag)
+{
+    sector_t lba = -1;
+    u8 opcode = 0;
+    struct ufshcd_lrb *lrbp;
+    int transfer_len = -1;
+
+    lrbp = &hba->lrb[tag];
+
+    if (lrbp->cmd) { /* data phase exists */
+        opcode = (u8)(*lrbp->cmd->cmnd);
+        if ((opcode == READ_10) || (opcode == WRITE_10)) {
+            /*
+            * Currently we only fully trace read(10) and write(10)
+            * commands
+            */
+            if (lrbp->cmd->request && lrbp->cmd->request->bio)
+                lba = lrbp->cmd->request->bio->bi_iter.bi_sector;
+
+            transfer_len = be32_to_cpu(lrbp->ucd_req_ptr->sc.exp_data_transfer_len);
+            dev_info(hba->dev, "opcode=0x%x, lba=%lu, len=%d\n", opcode, lba, transfer_len/512);
+        }
+    }
+}
+
+
 /**
  * ufshcd_send_command - Send SCSI or device management commands
  * @hba: per adapter instance
@@ -2153,6 +2187,9 @@ int ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag)
 	/* Make sure that doorbell is committed immediately */
 	wmb();
 	ufshcd_cond_add_cmd_trace(hba, task_tag, "send");
+    if(unlikely(fs_dump&FS_LOG_UFS_RW)){
+        ufshcd_rw_log(hba, task_tag);
+    }
 	ufshcd_update_tag_stats(hba, task_tag);
 	return ret;
 }
@@ -4859,7 +4896,7 @@ link_startup:
 
 	ret = ufshcd_make_hba_operational(hba);
 out:
-	if (ret) {
+	if (ret && (get_ufs_flag() == HAS_A_UFS)) {
 		dev_err(hba->dev, "link startup failed %d\n", ret);
 		ufshcd_print_host_state(hba);
 		ufshcd_print_pwr_info(hba);
@@ -7273,6 +7310,10 @@ static int ufshcd_probe_hba(struct ufs_hba *hba)
 	ufs_advertise_fixup_device(hba);
 	ufshcd_tune_unipro_params(hba);
 
+	dev_info(hba->dev, "UFSCHIP version 0x%x\n", hba->ufschip_version);
+	if(hba->ufschip_version == 0x200)
+		ufs_qcom_set_disbale_lpm(hba, true);
+
 	ufshcd_apply_pm_quirks(hba);
 	ret = ufshcd_set_vccq_rail_unused(hba,
 		(hba->dev_quirks & UFS_DEVICE_NO_VCCQ) ? true : false);
@@ -9655,6 +9696,12 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 	struct Scsi_Host *host = hba->host;
 	struct device *dev = hba->dev;
 
+    if(get_ufs_flag() == HAS_NO_UFS) {
+        dev_info(hba->dev, "Has no UFS device\n");
+    } else if(get_ufs_flag() == HAS_A_UFS){
+        dev_info(hba->dev, "Now has a UFS device\n");
+    }
+
 	if (!mmio_base) {
 		dev_err(hba->dev,
 		"Invalid memory reference for mmio_base is NULL\n");
@@ -9676,6 +9723,8 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 
 	/* Get UFS version supported by the controller */
 	hba->ufs_version = ufshcd_get_ufs_version(hba);
+
+	dev_info(hba->dev, "UFSHCI version 0x%x\n", hba->ufs_version);
 
 	/* print error message if ufs_version is not valid */
 	if ((hba->ufs_version != UFSHCI_VERSION_10) &&
@@ -9836,6 +9885,9 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 
 	ufshcd_add_sysfs_nodes(hba);
 
+    ufshcd_add_sysfs_prov(hba);
+
+	ufshcd_add_sysfs_version(hba);
 	return 0;
 
 out_remove_scsi_host:

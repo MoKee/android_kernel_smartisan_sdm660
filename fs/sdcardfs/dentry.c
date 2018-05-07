@@ -43,6 +43,12 @@ static int sdcardfs_d_revalidate(struct dentry *dentry, unsigned int flags)
 		spin_unlock(&dentry->d_lock);
 		return 1;
 	}
+	if (dentry->d_flags & DCACHE_WILL_INVALIDATE) {
+		dentry->d_flags &= ~DCACHE_WILL_INVALIDATE;
+		__d_drop(dentry);
+		spin_unlock(&dentry->d_lock);
+		return 0;
+	}
 	spin_unlock(&dentry->d_lock);
 
 	/* check uninitialized obb_dentry and
@@ -59,6 +65,14 @@ static int sdcardfs_d_revalidate(struct dentry *dentry, unsigned int flags)
 	lower_dentry = lower_path.dentry;
 	lower_cur_parent_dentry = dget_parent(lower_dentry);
 
+	if (lower_dentry->d_flags & DCACHE_OP_REVALIDATE) {
+		err = lower_dentry->d_op->d_revalidate(lower_dentry, flags);
+		if (!err) {
+			d_drop(dentry);
+			goto out;
+		}
+	}
+
 	spin_lock(&lower_dentry->d_lock);
 	if (d_unhashed(lower_dentry)) {
 		spin_unlock(&lower_dentry->d_lock);
@@ -74,6 +88,12 @@ static int sdcardfs_d_revalidate(struct dentry *dentry, unsigned int flags)
 		goto out;
 	}
 
+	if (dentry == lower_dentry) {
+		err = 0;
+		panic("sdcardfs: dentry is equal to lower_dentry\n");
+		goto out;
+	}
+
 	if (dentry < lower_dentry) {
 		spin_lock(&dentry->d_lock);
 		spin_lock(&lower_dentry->d_lock);
@@ -85,7 +105,7 @@ static int sdcardfs_d_revalidate(struct dentry *dentry, unsigned int flags)
 	if (dentry->d_name.len != lower_dentry->d_name.len) {
 		__d_drop(dentry);
 		err = 0;
-	} else if (strncasecmp(dentry->d_name.name, lower_dentry->d_name.name,
+	} else if (strncmp(dentry->d_name.name, lower_dentry->d_name.name,
 				dentry->d_name.len) != 0) {
 		__d_drop(dentry);
 		err = 0;
@@ -166,7 +186,7 @@ static int sdcardfs_cmp_ci(const struct dentry *parent,
 	}
 	*/
 	if (name->len == len) {
-		if (strncasecmp(name->name, str, len) == 0)
+		if (strncmp(name->name, str, len) == 0)
 			return 0;
 	}
 	return 1;

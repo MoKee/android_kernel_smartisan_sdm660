@@ -24,9 +24,6 @@
 #define __CHIPSET__ "SDM660 "
 #define MSM_DAILINK_NAME(name) (__CHIPSET__#name)
 
-#define DEFAULT_MCLK_RATE 9600000
-#define NATIVE_MCLK_RATE 11289600
-
 #define WCD_MBHC_DEF_RLOADS 5
 
 #define WCN_CDC_SLIM_RX_CH_MAX 2
@@ -154,7 +151,7 @@ static const char *const int_mi2s_tx_ch_text[] = {"One", "Two",
 static char const *bit_format_text[] = {"S16_LE", "S24_LE", "S24_3LE"};
 static const char *const loopback_mclk_text[] = {"DISABLE", "ENABLE"};
 static char const *bt_sample_rate_text[] = {"KHZ_8", "KHZ_16", "KHZ_48"};
-
+static char const *switch_to_audio_text[] = {"USB", "AUDIO"};
 static SOC_ENUM_SINGLE_EXT_DECL(int0_mi2s_rx_sample_rate, int_mi2s_rate_text);
 static SOC_ENUM_SINGLE_EXT_DECL(int0_mi2s_rx_chs, int_mi2s_ch_text);
 static SOC_ENUM_SINGLE_EXT_DECL(int0_mi2s_rx_format, bit_format_text);
@@ -170,9 +167,12 @@ static SOC_ENUM_SINGLE_EXT_DECL(int4_mi2s_rx_format, bit_format_text);
 static SOC_ENUM_SINGLE_EXT_DECL(int5_mi2s_tx_chs, int_mi2s_ch_text);
 static SOC_ENUM_SINGLE_EXT_DECL(loopback_mclk_en, loopback_mclk_text);
 static SOC_ENUM_SINGLE_EXT_DECL(bt_sample_rate, bt_sample_rate_text);
+static SOC_ENUM_SINGLE_EXT_DECL(switch_to_audio, switch_to_audio_text);
 
+#if 0
 static int msm_dmic_event(struct snd_soc_dapm_widget *w,
 			  struct snd_kcontrol *kcontrol, int event);
+#endif
 static int msm_int_enable_dig_cdc_clk(struct snd_soc_codec *codec, int enable,
 				      bool dapm);
 static int msm_int_mclk0_event(struct snd_soc_dapm_widget *w,
@@ -180,7 +180,7 @@ static int msm_int_mclk0_event(struct snd_soc_dapm_widget *w,
 static int msm_int_mi2s_snd_startup(struct snd_pcm_substream *substream);
 static void msm_int_mi2s_snd_shutdown(struct snd_pcm_substream *substream);
 
-static struct wcd_mbhc_config *mbhc_cfg_ptr;
+struct wcd_mbhc_config *mbhc_cfg_ptr;
 static struct snd_info_entry *codec_root;
 
 static int int_mi2s_get_bit_format_val(int bit_format)
@@ -439,14 +439,16 @@ static int int_mi2s_ch_put(struct snd_kcontrol *kcontrol,
 
 static const struct snd_soc_dapm_widget msm_int_dapm_widgets[] = {
 	SND_SOC_DAPM_SUPPLY_S("INT_MCLK0", -1, SND_SOC_NOPM, 0, 0,
-	msm_int_mclk0_event, SND_SOC_DAPM_POST_PMD),
+	msm_int_mclk0_event, SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
 	SND_SOC_DAPM_MIC("Handset Mic", NULL),
 	SND_SOC_DAPM_MIC("Headset Mic", NULL),
 	SND_SOC_DAPM_MIC("Secondary Mic", NULL),
+#if 0
 	SND_SOC_DAPM_MIC("Digital Mic1", msm_dmic_event),
 	SND_SOC_DAPM_MIC("Digital Mic2", msm_dmic_event),
 	SND_SOC_DAPM_MIC("Digital Mic3", msm_dmic_event),
 	SND_SOC_DAPM_MIC("Digital Mic4", msm_dmic_event),
+#endif
 };
 
 static int msm_config_hph_compander_gpio(bool enable,
@@ -730,6 +732,8 @@ static int msm_int_enable_dig_cdc_clk(struct snd_soc_codec *codec,
 		cancel_delayed_work_sync(&pdata->disable_int_mclk0_work);
 		mutex_lock(&pdata->cdc_int_mclk0_mutex);
 		if (atomic_read(&pdata->int_mclk0_enabled) == true) {
+			pdata->digital_cdc_core_clk.clk_freq_in_hz = 
+						DEFAULT_MCLK_RATE;
 			pdata->digital_cdc_core_clk.enable = 0;
 			ret = afe_set_lpass_clock_v2(
 				AFE_PORT_ID_INT0_MI2S_RX,
@@ -738,6 +742,7 @@ static int msm_int_enable_dig_cdc_clk(struct snd_soc_codec *codec,
 				pr_err("%s: failed to disable CCLK\n",
 						__func__);
 			atomic_set(&pdata->int_mclk0_enabled, false);
+			atomic_set(&pdata->int_mclk0_rsc_ref, 0);
 		}
 		mutex_unlock(&pdata->cdc_int_mclk0_mutex);
 	}
@@ -875,6 +880,36 @@ static int msm_bt_sample_rate_put(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+extern bool get_switch_stat(void);
+static int switch_to_audio_get(struct snd_kcontrol *kcontrol,
+				  struct snd_ctl_elem_value *ucontrol)
+{
+	bool current_stat;
+
+	// 0 for sleep(usb), 1 for active(audio)
+	current_stat = get_switch_stat();
+	ucontrol->value.integer.value[0] = current_stat;
+
+	pr_info("%s: current_stat %s\n", __func__,
+		 current_stat ? "AUDIO" : "USB");
+
+	return 0;
+}
+
+extern int set_switch_to_audio(bool audio);
+static int switch_to_audio_put(struct snd_kcontrol *kcontrol,
+				  struct snd_ctl_elem_value *ucontrol)
+{
+	bool audio = !!ucontrol->value.integer.value[0];
+	int rc = 0;
+
+	rc = set_switch_to_audio(audio);
+	pr_info("%s: switch to %s, rc: %d\n",
+		 __func__, audio ? "AUDIO" : "USB", rc);
+
+	return rc;
+}
+
 static const struct snd_kcontrol_new msm_snd_controls[] = {
 	SOC_ENUM_EXT("INT0_MI2S_RX Format", int0_mi2s_rx_format,
 		     int_mi2s_bit_format_get, int_mi2s_bit_format_put),
@@ -902,6 +937,9 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 	SOC_ENUM_EXT("BT SampleRate", bt_sample_rate,
 			msm_bt_sample_rate_get,
 			msm_bt_sample_rate_put),
+	SOC_ENUM_EXT("SWITCH_TO_AUDIO", switch_to_audio,
+			switch_to_audio_get,
+			switch_to_audio_put),
 };
 
 static const struct snd_kcontrol_new msm_sdw_controls[] = {
@@ -916,6 +954,7 @@ static const struct snd_kcontrol_new msm_sdw_controls[] = {
 		     msm_vi_feed_tx_ch_get, msm_vi_feed_tx_ch_put),
 };
 
+#if 0
 static int msm_dmic_event(struct snd_soc_dapm_widget *w,
 			  struct snd_kcontrol *kcontrol, int event)
 {
@@ -948,6 +987,7 @@ static int msm_dmic_event(struct snd_soc_dapm_widget *w,
 	}
 	return 0;
 }
+#endif
 
 static int msm_int_mclk0_event(struct snd_soc_dapm_widget *w,
 			       struct snd_kcontrol *kcontrol, int event)
@@ -959,6 +999,16 @@ static int msm_int_mclk0_event(struct snd_soc_dapm_widget *w,
 	pdata = snd_soc_card_get_drvdata(codec->component.card);
 	pr_debug("%s: event = %d\n", __func__, event);
 	switch (event) {
+	case SND_SOC_DAPM_PRE_PMU:
+	ret = msm_cdc_pinctrl_select_active_state(pdata->pdm_gpio_p);
+	if (ret < 0) {
+		pr_err("%s: gpio set cannot be activated %s\n",
+				__func__, "int_pdm");
+		return ret;
+	}
+		msm_int_enable_dig_cdc_clk(codec, 1, true);
+		msm_anlg_cdc_mclk_enable(codec, 1, true);
+		break;
 	case SND_SOC_DAPM_POST_PMD:
 		pr_debug("%s: mclk_res_ref = %d\n",
 			__func__, atomic_read(&pdata->int_mclk0_rsc_ref));
@@ -968,12 +1018,10 @@ static int msm_int_mclk0_event(struct snd_soc_dapm_widget *w,
 					__func__, "int_pdm");
 			return ret;
 		}
-		if (atomic_read(&pdata->int_mclk0_rsc_ref) == 0) {
-			pr_debug("%s: disabling MCLK\n", __func__);
-			/* disable the codec mclk config*/
-			msm_anlg_cdc_mclk_enable(codec, 0, true);
-			msm_int_enable_dig_cdc_clk(codec, 0, true);
-		}
+		pr_debug("%s: disabling MCLK\n", __func__);
+		/* disable the codec mclk config*/
+		msm_anlg_cdc_mclk_enable(codec, 0, true);
+		msm_int_enable_dig_cdc_clk(codec, 0, true);
 		break;
 	default:
 		pr_err("%s: invalid DAPM event %d\n", __func__, event);
@@ -1158,19 +1206,6 @@ static int msm_int_mi2s_snd_startup(struct snd_pcm_substream *substream)
 				__func__, ret);
 		return ret;
 	}
-	ret =  msm_int_enable_dig_cdc_clk(codec, 1, true);
-	if (ret < 0) {
-		pr_err("failed to enable mclk\n");
-		return ret;
-	}
-	/* Enable the codec mclk config */
-	ret = msm_cdc_pinctrl_select_active_state(pdata->pdm_gpio_p);
-	if (ret < 0) {
-		pr_err("%s: gpio set cannot be activated %s\n",
-				__func__, "int_pdm");
-		return ret;
-	}
-	msm_anlg_cdc_mclk_enable(codec, 1, true);
 	ret = snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_CBS_CFS);
 	if (ret < 0)
 		pr_err("%s: set fmt cpu dai failed; ret=%d\n", __func__, ret);
@@ -1181,9 +1216,6 @@ static int msm_int_mi2s_snd_startup(struct snd_pcm_substream *substream)
 static void msm_int_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
 {
 	int ret;
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_card *card = rtd->card;
-	struct msm_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
 
 	pr_debug("%s(): substream = %s  stream = %d\n", __func__,
 			substream->name, substream->stream);
@@ -1192,12 +1224,6 @@ static void msm_int_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
 	if (ret < 0)
 		pr_err("%s:clock disable failed; ret=%d\n", __func__,
 				ret);
-	if (atomic_read(&pdata->int_mclk0_rsc_ref) > 0) {
-		atomic_dec(&pdata->int_mclk0_rsc_ref);
-		pr_debug("%s: decrementing mclk_res_ref %d\n",
-			 __func__,
-			 atomic_read(&pdata->int_mclk0_rsc_ref));
-	}
 }
 
 static void *def_msm_int_wcd_mbhc_cal(void)
@@ -1212,7 +1238,7 @@ static void *def_msm_int_wcd_mbhc_cal(void)
 		return NULL;
 
 #define S(X, Y) ((WCD_MBHC_CAL_PLUG_TYPE_PTR(msm_int_wcd_cal)->X) = (Y))
-	S(v_hs_max, 1500);
+	S(v_hs_max, 1700);
 #undef S
 #define S(X, Y) ((WCD_MBHC_CAL_BTN_DET_PTR(msm_int_wcd_cal)->X) = (Y))
 	S(num_btn, WCD_MBHC_DEF_BUTTONS);
@@ -1237,14 +1263,17 @@ static void *def_msm_int_wcd_mbhc_cal(void)
 	 */
 	btn_low[0] = 75;
 	btn_high[0] = 75;
-	btn_low[1] = 150;
-	btn_high[1] = 150;
-	btn_low[2] = 225;
-	btn_high[2] = 225;
-	btn_low[3] = 450;
-	btn_high[3] = 450;
-	btn_low[4] = 500;
-	btn_high[4] = 500;
+
+	btn_low[1] = 225;
+	btn_high[1] = 225;
+
+	btn_low[2] = 425;
+	btn_high[2] = 425;
+
+	btn_low[3] = 625;
+	btn_high[3] = 625;
+	btn_low[4] = 625;
+	btn_high[4] = 625;
 
 	return msm_int_wcd_cal;
 }
@@ -1282,8 +1311,10 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dapm_ignore_suspend(dapm, "Handset Mic");
 	snd_soc_dapm_ignore_suspend(dapm, "Headset Mic");
 	snd_soc_dapm_ignore_suspend(dapm, "Secondary Mic");
+#if 0
 	snd_soc_dapm_ignore_suspend(dapm, "Digital Mic1");
 	snd_soc_dapm_ignore_suspend(dapm, "Digital Mic2");
+#endif
 
 	snd_soc_dapm_ignore_suspend(dapm, "EAR");
 	snd_soc_dapm_ignore_suspend(dapm, "HEADPHONE");
@@ -1291,14 +1322,17 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dapm_ignore_suspend(dapm, "AMIC1");
 	snd_soc_dapm_ignore_suspend(dapm, "AMIC2");
 	snd_soc_dapm_ignore_suspend(dapm, "AMIC3");
-	snd_soc_dapm_sync(dapm);
-
-	dapm = snd_soc_codec_get_dapm(dig_cdc);
+#if 0
 	snd_soc_dapm_ignore_suspend(dapm, "DMIC1");
 	snd_soc_dapm_ignore_suspend(dapm, "DMIC2");
 	snd_soc_dapm_ignore_suspend(dapm, "DMIC3");
 	snd_soc_dapm_ignore_suspend(dapm, "DMIC4");
+#endif
 
+
+	snd_soc_dapm_sync(dapm);
+
+	dapm = snd_soc_codec_get_dapm(dig_cdc);
 	snd_soc_dapm_sync(dapm);
 
 	msm_anlg_cdc_spk_ext_pa_cb(enable_spk_ext_pa, ana_cdc);
@@ -2328,6 +2362,27 @@ static struct snd_soc_dai_link msm_int_wsa_dai[] = {
 	},
 };
 
+//Add for maxim dsm
+static struct snd_soc_dai_link maxim_fe_dai[] = {
+	{/* hw:x,40 */
+		.name = "Secondary MI2S_TX Hostless",
+		.stream_name = "Secondary MI2S_TX Hostless",
+		.cpu_dai_name = "SEC_MI2S_TX_HOSTLESS",
+		.platform_name	= "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		 /* this dailink has playback support */
+		.ignore_pmdown_time = 1,
+		/* This dainlink has MI2S support */
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+};
+
 static struct snd_soc_dai_link msm_int_be_dai[] = {
 	/* Backend I2S DAI Links */
 	{
@@ -2639,8 +2694,8 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.stream_name = "Secondary MI2S Playback",
 		.cpu_dai_name = "msm-dai-q6-mi2s.1",
 		.platform_name = "msm-pcm-routing",
-		.codec_name = "msm-stub-codec.1",
-		.codec_dai_name = "msm-stub-rx",
+		.codec_name = "max98927-codec",
+		.codec_dai_name = "max98927-aif1",
 		.no_pcm = 1,
 		.dpcm_playback = 1,
 		.be_id = MSM_BACKEND_DAI_SECONDARY_MI2S_RX,
@@ -2654,8 +2709,8 @@ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 		.stream_name = "Secondary MI2S Capture",
 		.cpu_dai_name = "msm-dai-q6-mi2s.1",
 		.platform_name = "msm-pcm-routing",
-		.codec_name = "msm-stub-codec.1",
-		.codec_dai_name = "msm-stub-tx",
+		.codec_name = "max98927-codec",
+		.codec_dai_name = "max98927-aif1",
 		.no_pcm = 1,
 		.dpcm_capture = 1,
 		.be_id = MSM_BACKEND_DAI_SECONDARY_MI2S_TX,
@@ -2947,7 +3002,8 @@ ARRAY_SIZE(msm_mi2s_be_dai_links) +
 ARRAY_SIZE(msm_auxpcm_be_dai_links)+
 ARRAY_SIZE(msm_wcn_be_dai_links) +
 ARRAY_SIZE(msm_wsa_be_dai_links) +
-ARRAY_SIZE(ext_disp_be_dai_link)];
+ARRAY_SIZE(ext_disp_be_dai_link) +
+ARRAY_SIZE(maxim_fe_dai)];
 
 static struct snd_soc_card sdm660_card = {
 	/* snd_soc_card_sdm660 */
@@ -2967,14 +3023,16 @@ static void msm_disable_int_mclk0(struct work_struct *work)
 	pdata = container_of(dwork, struct msm_asoc_mach_data,
 			disable_int_mclk0_work);
 	mutex_lock(&pdata->cdc_int_mclk0_mutex);
-	pr_debug("%s: mclk_enabled %d mclk_rsc_ref %d\n", __func__,
+	pr_err("%s: mclk_enabled %d mclk_rsc_ref %d\n", __func__,
 			atomic_read(&pdata->int_mclk0_enabled),
 			atomic_read(&pdata->int_mclk0_rsc_ref));
 
 	if (atomic_read(&pdata->int_mclk0_enabled) == true
 			&& atomic_read(&pdata->int_mclk0_rsc_ref) == 0) {
-		pr_debug("Disable the mclk\n");
+		pr_err("Disable the mclk\n");
 		pdata->digital_cdc_core_clk.enable = 0;
+		pdata->digital_cdc_core_clk.clk_freq_in_hz = 
+					DEFAULT_MCLK_RATE;
 		ret = afe_set_lpass_clock_v2(
 			AFE_PORT_ID_INT0_MI2S_RX,
 			&pdata->digital_cdc_core_clk);
@@ -3018,6 +3076,10 @@ static struct snd_soc_card *msm_int_populate_sndcard_dailinks(
 		       sizeof(msm_int_wsa_dai));
 		len1 += ARRAY_SIZE(msm_int_wsa_dai);
 	}
+    memcpy(dailink + len1,
+        maxim_fe_dai,
+        sizeof(maxim_fe_dai));
+    len1 += ARRAY_SIZE(maxim_fe_dai);
 	memcpy(dailink + len1, msm_int_be_dai, sizeof(msm_int_be_dai));
 	len1 += ARRAY_SIZE(msm_int_be_dai);
 

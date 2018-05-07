@@ -217,4 +217,10 @@ config USB_BAM
 	  Enabling this option adds USB BAM Driver.
 	  USB BAM driver was added to supports SPS Peripheral-to-Peripheral
 	  transfers between the USB and other peripheral.
+
+config OSBORN_DEBUG
+       tristate "Smartisan OSBORN DEBUG CONTROL"
+       help
+         Support Smartisan OSBORN product debug message
+
 endmenu

@@ -931,6 +931,8 @@ struct ufs_hba {
 	
 	int			latency_hist_enabled;
 	struct io_latency_state io_lat_s;
+
+	int	ufschip_version;
 };
 
 static inline void ufshcd_mark_shutdown_ongoing(struct ufs_hba *hba)

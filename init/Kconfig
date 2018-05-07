@@ -1138,7 +1138,7 @@ config FAIR_GROUP_SCHED
 config CFS_BANDWIDTH
 	bool "CPU bandwidth provisioning for FAIR_GROUP_SCHED"
 	depends on FAIR_GROUP_SCHED
-	default n
+	default y 
 	help
 	  This option allows users to define CPU bandwidth rates (limits) for
 	  tasks running within the fair group scheduler.  Groups with no limit
@@ -1162,7 +1162,7 @@ endif #CGROUP_SCHED
 config BLK_CGROUP
 	bool "Block IO controller"
 	depends on BLOCK
-	default n
+	default y
 	---help---
 	Generic block IO controller cgroup interface. This is the common
 	cgroup interface which should be used by various IO controlling

@@ -1096,6 +1096,7 @@ static irqreturn_t qpnp_wled_ovp_irq_handler(int irq, void *_wled)
 	struct qpnp_wled *wled = _wled;
 	int rc;
 	u8 fault_sts, int_sts;
+	static int error_num = 0;
 
 	rc = qpnp_wled_read_reg(wled,
 			QPNP_WLED_INT_RT_STS(wled->ctrl_base), &int_sts);
@@ -1111,9 +1112,17 @@ static irqreturn_t qpnp_wled_ovp_irq_handler(int irq, void *_wled)
 		return IRQ_HANDLED;
 	}
 
+	if (error_num <= 10) {
+
 	if (fault_sts & (QPNP_WLED_OVP_FAULT_BIT | QPNP_WLED_ILIM_FAULT_BIT))
-		pr_err("WLED OVP fault detected, int_sts=%x fault_sts= %x\n",
-			int_sts, fault_sts);
+		/*
+		 * pr_err("WLED OVP fault detected, int_sts=%x fault_sts= %x\n",
+		 *         int_sts, fault_sts);
+		 */
+
+		error_num += 1;
+	}
+		
 	return IRQ_HANDLED;
 }
 

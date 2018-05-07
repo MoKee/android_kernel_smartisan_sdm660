@@ -1175,11 +1175,15 @@ static int mdss_mdp_video_pollwait(struct mdss_mdp_ctl *ctl)
 			ctl->intf_num);
 
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+	MDSS_XLOG(0x888);
+	pr_err("mdss before pollwait\n");
 	rc = readl_poll_timeout(ctl->mdata->mdp_base + MDSS_MDP_REG_INTR_STATUS,
 		status,
 		(status & mask) || try_wait_for_completion(&ctx->vsync_comp),
 		1000,
 		VSYNC_TIMEOUT_US);
+	pr_err("mdss end pollwait\n");
+	MDSS_XLOG(0x999); 
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
 
 	if (rc == 0) {

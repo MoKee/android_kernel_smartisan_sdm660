@@ -99,6 +99,28 @@ ext4_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	int overwrite = 0;
 	ssize_t ret;
 
+    // for fs_dump
+    if (unlikely(fs_dump&FS_LOG_EXT4_WRITE)) {
+        char fullname_buf[1024];
+        char *fullname=NULL;
+        loff_t pos = iocb->ki_pos;
+        size_t length = iov_iter_count(from);
+
+        fullname=getfullpath(inode,fullname_buf,sizeof(fullname_buf));
+        if(fullname)
+        {
+            // not dump logd/* files
+            if(!strstr(fullname, "logd"))
+            {
+                printk(KERN_DEBUG "%s(%d): ext4 inode: %lu, name: %s, lenght: %lu, pos: %lld, direct: %d\n", current->comm, current->pid, inode->i_ino, fullname, length, pos, !!o_direct);                
+            }
+        }
+        else
+        {
+            printk(KERN_DEBUG "%s(%d): ext4 inode: %lu, name: %s, lenght: %lu, pos: %lld, direct: %d\n", current->comm, current->pid, inode->i_ino, "NULL", length, pos, !!o_direct);                
+        }
+    }
+
 	/*
 	 * Unaligned direct AIO must be serialized; see comment above
 	 * In the case of O_APPEND, assume that we must always serialize

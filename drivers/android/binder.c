@@ -18,6 +18,7 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <asm/cacheflush.h>
+#include <linux/cgroup.h>
 #include <linux/fdtable.h>
 #include <linux/file.h>
 #include <linux/freezer.h>
@@ -33,6 +34,7 @@
 #include <linux/rbtree.h>
 #include <linux/sched.h>
 #include <linux/seq_file.h>
+#include <linux/time.h>
 #include <linux/uaccess.h>
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
@@ -107,6 +109,8 @@ enum {
 	BINDER_DEBUG_BUFFER_ALLOC           = 1U << 13,
 	BINDER_DEBUG_PRIORITY_CAP           = 1U << 14,
 	BINDER_DEBUG_BUFFER_ALLOC_ASYNC     = 1U << 15,
+	BINDER_DEBUG_BG                     = 1U << 16,
+	BINDER_DEBUG_PERF                   = 1U << 17,
 };
 static uint32_t binder_debug_mask = BINDER_DEBUG_USER_ERROR |
 	BINDER_DEBUG_FAILED_TRANSACTION | BINDER_DEBUG_DEAD_TRANSACTION;
@@ -354,6 +358,9 @@ struct binder_proc {
 	long default_priority;
 	struct dentry *debugfs_entry;
 	struct binder_context *context;
+	struct list_head bg_todo;
+	wait_queue_head_t bg_wait;
+	bool   hasBg;
 };
 
 enum {
@@ -2022,8 +2029,15 @@ static void binder_transaction(struct binder_proc *proc,
 		target_list = &target_thread->todo;
 		target_wait = &target_thread->wait;
 	} else {
-		target_list = &target_proc->todo;
-		target_wait = &target_proc->wait;
+        if (target_proc->hasBg && cgroup_task_in_cpu_bg(current)) {
+            //data processed as normal after taken out, so it is freed as normal
+            target_list = &target_proc->bg_todo;
+            target_wait = &target_proc->bg_wait;
+            binder_debug(BINDER_DEBUG_BG, "put to bg, %d:%d\n", target_proc->pid, current->pid);
+        } else {
+            target_list = &target_proc->todo;
+            target_wait = &target_proc->wait;
+        }
 	}
 	e->to_proc = target_proc->pid;
 
@@ -2723,17 +2737,24 @@ static int binder_has_proc_work(struct binder_proc *proc,
 	return !list_empty(&proc->todo) ||
 		(thread->looper & BINDER_LOOPER_STATE_NEED_RETURN);
 }
-
+static int binder_has_proc_work_bg(struct binder_proc *proc,
+				struct binder_thread *thread)
+{//note: bg_todo must inited before calling
+    return !list_empty(&proc->bg_todo) ||
+        (thread->looper & BINDER_LOOPER_STATE_NEED_RETURN);
+}
 static int binder_has_thread_work(struct binder_thread *thread)
 {
 	return !list_empty(&thread->todo) || thread->return_error != BR_OK ||
 		(thread->looper & BINDER_LOOPER_STATE_NEED_RETURN);
 }
 
+void binder_check_proc_migrate_from_bg(void);
+
 static int binder_thread_read(struct binder_proc *proc,
 			      struct binder_thread *thread,
 			      binder_uintptr_t binder_buffer, size_t size,
-			      binder_size_t *consumed, int non_block)
+			      binder_size_t *consumed, int non_block, bool isbg)
 {
 	void __user *buffer = (void __user *)(uintptr_t)binder_buffer;
 	void __user *ptr = buffer + *consumed;
@@ -2741,6 +2762,19 @@ static int binder_thread_read(struct binder_proc *proc,
 
 	int ret = 0;
 	int wait_for_proc_work;
+    bool getting_bg = false;
+
+    if (isbg){//will set to t->priority later
+        if (!proc->hasBg) {
+            INIT_LIST_HEAD(&proc->bg_todo);
+            init_waitqueue_head(&proc->bg_wait);
+        }
+        proc->hasBg = true;
+        binder_debug(BINDER_DEBUG_BG, "bg thread, pid:%d, priority:%d\n"
+            , current->pid, task_nice(current));
+    }
+
+    binder_check_proc_migrate_from_bg();
 
 	if (*consumed == 0) {
 		if (put_user_preempt_disabled(BR_NOOP, (uint32_t __user *)ptr))
@@ -2772,7 +2806,7 @@ retry:
 
 
 	thread->looper |= BINDER_LOOPER_STATE_WAITING;
-	if (wait_for_proc_work)
+	if (wait_for_proc_work && !isbg)
 		proc->ready_threads++;
 
 	binder_unlock(__func__);
@@ -2789,11 +2823,30 @@ retry:
 						 binder_stop_on_user_error < 2);
 		}
 		binder_set_nice(proc->default_priority);
-		if (non_block) {
-			if (!binder_has_proc_work(proc, thread))
-				ret = -EAGAIN;
-		} else
-			ret = wait_event_freezable_exclusive(proc->wait, binder_has_proc_work(proc, thread));
+        if (!isbg) {
+            if (!binder_has_proc_work(proc, thread)) {
+                if(proc->hasBg 
+                && proc->ready_threads * 3 > proc->requested_threads_started * 2
+                && binder_has_proc_work_bg(proc, thread)) {
+                    //hbt todo, do we need check bg works and fg work
+                    //if fg is busy, we not getting_bg
+                    //checking method, last hz and this hz;
+                    getting_bg = true;
+                    binder_debug(BINDER_DEBUG_BG, "getting more bg trans, threads ready:%d, total:%d\n", proc->ready_threads, proc->requested_threads_started);
+                }else if (non_block) {
+                    ret = -EAGAIN;
+                }else {
+                    ret = wait_event_freezable_exclusive(proc->wait, binder_has_proc_work(proc, thread));
+                }
+            }
+        }else{
+            if (non_block) {
+                if (!binder_has_proc_work_bg(proc, thread))
+                    ret = -EAGAIN;
+            } else {
+                ret = wait_event_freezable_exclusive(proc->bg_wait, binder_has_proc_work_bg(proc, thread));
+            }
+        }
 	} else {
 		if (non_block) {
 			if (!binder_has_thread_work(thread))
@@ -2804,7 +2857,7 @@ retry:
 
 	binder_lock(__func__);
 
-	if (wait_for_proc_work)
+	if (wait_for_proc_work && !isbg)
 		proc->ready_threads--;
 	thread->looper &= ~BINDER_LOOPER_STATE_WAITING;
 
@@ -2820,11 +2873,13 @@ retry:
 		if (!list_empty(&thread->todo)) {
 			w = list_first_entry(&thread->todo, struct binder_work,
 					     entry);
-		} else if (!list_empty(&proc->todo) && wait_for_proc_work) {
+		} else if (!isbg && !list_empty(&proc->todo) && wait_for_proc_work) {
 			w = list_first_entry(&proc->todo, struct binder_work,
 					     entry);
-		} else {
-			/* no data added */
+        } else if ( (isbg||getting_bg) && !list_empty(&proc->bg_todo) && wait_for_proc_work){
+			w = list_first_entry(&proc->bg_todo, struct binder_work, entry);
+            binder_debug(BINDER_DEBUG_BG, "getting bg(%d), w:%p\n", getting_bg, w);
+        } else {
 			if (ptr - buffer == 4 &&
 			    !(thread->looper & BINDER_LOOPER_STATE_NEED_RETURN))
 				goto retry;
@@ -3215,7 +3270,7 @@ static unsigned int binder_poll(struct file *filp,
 
 static int binder_ioctl_write_read(struct file *filp,
 				unsigned int cmd, unsigned long arg,
-				struct binder_thread *thread)
+				struct binder_thread *thread, bool bg_trans)
 {
 	int ret = 0;
 	struct binder_proc *proc = filp->private_data;
@@ -3232,10 +3287,10 @@ static int binder_ioctl_write_read(struct file *filp,
 		goto out;
 	}
 	binder_debug(BINDER_DEBUG_READ_WRITE,
-		     "%d:%d write %lld at %016llx, read %lld at %016llx\n",
+		     "%d:%d write %lld at %016llx, read %lld at %016llx, bg_trans:%d\n",
 		     proc->pid, thread->pid,
 		     (u64)bwr.write_size, (u64)bwr.write_buffer,
-		     (u64)bwr.read_size, (u64)bwr.read_buffer);
+		     (u64)bwr.read_size, (u64)bwr.read_buffer, bg_trans);
 
 	if (bwr.write_size > 0) {
 		ret = binder_thread_write(proc, thread,
@@ -3254,8 +3309,10 @@ static int binder_ioctl_write_read(struct file *filp,
 		ret = binder_thread_read(proc, thread, bwr.read_buffer,
 					 bwr.read_size,
 					 &bwr.read_consumed,
-					 filp->f_flags & O_NONBLOCK);
+					 filp->f_flags & O_NONBLOCK, bg_trans);
 		trace_binder_read_done(ret);
+            //normal queue need this, currently only one bg thread,
+            //so needs not wake up any other
 		if (!list_empty(&proc->todo))
 			wake_up_interruptible(&proc->wait);
 		if (ret < 0) {
@@ -3343,8 +3400,13 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	}
 
 	switch (cmd) {
+	case BINDER_WRITE_READ_BG:
+		ret = binder_ioctl_write_read(filp, cmd, arg, thread, true);
+		if (ret)
+			goto err;
+		break;
 	case BINDER_WRITE_READ:
-		ret = binder_ioctl_write_read(filp, cmd, arg, thread);
+		ret = binder_ioctl_write_read(filp, cmd, arg, thread, false);
 		if (ret)
 			goto err;
 		break;
@@ -3378,6 +3440,46 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		}
 		break;
 	}
+  case BINDER_GET_SERVER_THREAD_TID: {
+    __s32 server_tid = 0;
+    struct binder_transaction *transaction=NULL;
+    struct binder_thread *client_tid;
+    struct rb_node *parent = NULL;
+    struct rb_node **p = &proc->threads.rb_node;
+    pid_t currentTid = 0;
+    if (copy_from_user(&currentTid, ubuf, sizeof(pid_t))) {
+      goto err;
+    }
+    if (currentTid == 0) {
+      //the client is main thread for the anr binder calling
+      currentTid = current->tgid;
+    }
+    while (*p) {
+      parent = *p;
+      client_tid = rb_entry(parent, struct binder_thread, rb_node);
+      if (currentTid < client_tid->pid)
+        p = &(*p)->rb_left;
+      else if (currentTid > client_tid->pid)
+        p = &(*p)->rb_right;
+      else
+        break;
+    }
+    if (client_tid == NULL) {
+      ret = -EINVAL;
+      goto err;
+    }
+    transaction = client_tid->transaction_stack;
+    if (transaction == NULL) {
+      ret = -EINVAL;
+      goto err;
+    }
+    server_tid = transaction->to_thread ? transaction->to_thread->pid : 0;
+    if (copy_to_user(ubuf, &server_tid, sizeof(server_tid))) {
+      ret = -EINVAL;
+      goto err;
+    }
+    break;
+  }
 	default:
 		ret = -EINVAL;
 		goto err;
@@ -3551,6 +3653,7 @@ static int binder_open(struct inode *nodp, struct file *filp)
 	INIT_LIST_HEAD(&proc->todo);
 	init_waitqueue_head(&proc->wait);
 	proc->default_priority = task_nice(current);
+	proc->hasBg = false;
 	binder_dev = container_of(filp->private_data, struct binder_device,
 				  miscdev);
 	proc->context = &binder_dev->context;
@@ -3721,6 +3824,7 @@ static void binder_deferred_release(struct binder_proc *proc)
 	}
 
 	binder_release_work(&proc->todo);
+    if (proc->hasBg) binder_release_work(&proc->bg_todo);
 	binder_release_work(&proc->delivered_death);
 
 	buffers = 0;
@@ -4004,6 +4108,10 @@ static void print_binder_proc(struct seq_file *m,
 				    rb_entry(n, struct binder_buffer, rb_node));
 	list_for_each_entry(w, &proc->todo, entry)
 		print_binder_work(m, "  ", "  pending transaction", w);
+    if (proc->hasBg) {
+        list_for_each_entry(w, &proc->bg_todo, entry)
+            print_binder_work(m, "  ", "  pending bg transaction", w);
+    }
 	list_for_each_entry(w, &proc->delivered_death, entry) {
 		seq_puts(m, "  has delivered dead binder\n");
 		break;
@@ -4150,6 +4258,19 @@ static void print_binder_proc_stats(struct seq_file *m,
 	}
 	seq_printf(m, "  pending transactions: %d\n", count);
 
+	count = 0;
+    if (proc->hasBg) {
+        list_for_each_entry(w, &proc->bg_todo, entry) {
+            switch (w->type) {
+                case BINDER_WORK_TRANSACTION:
+                    count++;
+                    break;
+                default:
+                    break;
+            }
+        }
+        seq_printf(m, "  pending bg transactions: %d\n", count);
+    }
 	print_binder_stats(m, "  ", &proc->stats);
 }
 
@@ -4378,6 +4499,101 @@ err_alloc_device_names_failed:
 }
 
 device_initcall(binder_init);
+
+void binder_check_proc_migrate_from_bg(void)
+{
+    int   i, pid_count, proc_count = 0, proc_bg_count = 0, it_count = 0, entry_count = 0, server_count = 0;
+    pid_t bg_released_pids[20];
+
+	struct binder_work *w, *wtmp;
+    struct binder_transaction * t;
+    struct binder_proc * proc, *find_proc = NULL;
+    struct timeval begin, m1, end;//hbt
+    if(BINDER_DEBUG_PERF & binder_debug_mask) {
+        do_gettimeofday(&begin);
+    }
+
+    pid_count = cgroup_get_bg_released_pids(bg_released_pids, 20);
+    if (pid_count <=0) {
+        return;
+    }
+    if(BINDER_DEBUG_PERF & binder_debug_mask) {
+        do_gettimeofday(&m1);
+    }
+	hlist_for_each_entry(proc, &binder_procs, proc_node) {
+        struct list_head *it, *tmp, *head = &proc->bg_todo;
+        ++proc_count;
+        if (proc->hasBg) {
+            bool moved = false;
+            ++proc_bg_count;
+            //list_for_each_entry(w, &proc->bg_todo, entry)
+            binder_debug(BINDER_DEBUG_BG, "bg:%p, bg.next:%p, todo:%p, todo.next:%p\n", 
+                &proc->bg_todo, proc->bg_todo.next, &proc->todo, &proc->todo.next);
+            for (it = head->next; it != head; ){
+                int from_pid;
+                w = (struct binder_work *)it;
+                if (unlikely(w->type != BINDER_WORK_TRANSACTION)) {
+                    it = it->next;
+                    binder_debug(BINDER_DEBUG_BG,"get error work type:%d, w:%p\n", w->type, w);
+                    continue;
+                }
+                t = container_of(w, struct binder_transaction, work);
+                if (!t->from) {
+                    it = it->next;
+                    binder_debug(BINDER_DEBUG_BG, "t->from is null it:%p, w:%p", it, w);
+                    continue;
+                }
+                for (i = 0, from_pid = t->from->proc->pid; i < pid_count; ++i) {
+                    ++it_count;
+                    if(from_pid == bg_released_pids[i]) {
+                        ++entry_count;
+                        if(proc != find_proc) {
+                            find_proc = proc;
+                            ++server_count;
+                        }
+                        tmp = it->next;
+                        it->prev->next = it->next;
+                        it->next->prev = it->prev;
+                        it->next = proc->todo.next;
+                        it->prev = &proc->todo;
+                        it->next->prev = it;
+                        proc->todo.next = it;
+                        //list_move(&w->entry, &proc->todo);
+                        moved = true;
+                        if(BINDER_DEBUG_BG & binder_debug_mask) {
+                            pr_info("moved it:%p to todo:%p, tmp:%p\n", it, &proc->todo, tmp);
+                            list_for_each_entry(wtmp, &proc->todo, entry){//hbt todo
+                                pr_info("wtmp:%p, entry:%p, prev:%p, next:%p\n", 
+                                    wtmp, &wtmp->entry, wtmp->entry.prev, wtmp->entry.next);
+                            }
+                            pr_info("moved bg_list, bg_todo:%p\n", &proc->bg_todo);
+                            list_for_each_entry(wtmp, &proc->bg_todo, entry){//hbt todo
+                                pr_info("wtmp:%p, entry:%p, prev:%p, next:%p\n", 
+                                    wtmp, &wtmp->entry, wtmp->entry.prev, wtmp->entry.next);
+                            }
+                        }
+                        it = tmp;
+                        break;
+                    }
+                }
+                if(it == (struct list_head *)w) {
+                    it = it->next;
+                    binder_debug(BINDER_DEBUG_BG, "to next it:%p, w:%p", it, w);
+                }
+            }
+            if(moved) {
+                wake_up_interruptible(&proc->wait);
+            }
+        }
+    }
+    if(BINDER_DEBUG_PERF & binder_debug_mask) {
+        do_gettimeofday(&end);
+    }
+    binder_debug(BINDER_DEBUG_PERF, "move from bg, count:%d:%d:%d, time:%ld:%ld, count:%d:%d:%d\n"
+        , entry_count, server_count, pid_count, (end.tv_usec-m1.tv_usec)
+        , (m1.tv_usec-begin.tv_usec)
+        , proc_count, proc_bg_count, it_count);
+}
 
 #define CREATE_TRACE_POINTS
 #include "binder_trace.h"

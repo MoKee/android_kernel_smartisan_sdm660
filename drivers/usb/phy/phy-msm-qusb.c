@@ -172,6 +172,8 @@ struct qusb_phy {
 	struct mutex		phy_lock;
 };
 
+struct qusb_phy *qphy_g;
+
 static void qusb_phy_enable_clocks(struct qusb_phy *qphy, bool on)
 {
 	dev_dbg(qphy->phy.dev, "%s(): clocks_enabled:%d on:%d\n",
@@ -428,6 +430,14 @@ static int qusb_phy_update_dpdm(struct usb_phy *phy, int value)
 
 	return ret;
 }
+
+int smart_set_dp_dm_enable(void)
+{
+       if(qphy_g == NULL)
+               return -1;
+       return qusb_phy_update_dpdm(&qphy_g->phy,POWER_SUPPLY_DP_DM_DPF_DMF);
+}
+EXPORT_SYMBOL(smart_set_dp_dm_enable);
 
 static void qusb_phy_get_tune2_param(struct qusb_phy *qphy)
 {
@@ -898,6 +908,7 @@ static int qusb_phy_probe(struct platform_device *pdev)
 	if (!qphy)
 		return -ENOMEM;
 
+        qphy_g = qphy;
 	qphy->phy.dev = dev;
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 							"qusb_phy_base");

@@ -15,8 +15,13 @@
  * GNU General Public License for more details.
  */
 
+#define SYSRQ_UART
 #if defined(CONFIG_SERIAL_MSM_CONSOLE) && defined(CONFIG_MAGIC_SYSRQ)
+#ifndef SYSRQ_UART
 # define SUPPORT_SYSRQ
+#else
+#define SUPPORT_SYSRQ
+#endif
 #endif
 
 #include <linux/kernel.h>
@@ -156,6 +161,9 @@
 #define UARTDM_NCF_TX			0x40
 #define UARTDM_RX_TOTAL_SNAP		0x38
 
+#define UARTDM_TXFS			0x4c
+#define UARTDM_RXFS			0x50
+
 #define UARTDM_BURST_SIZE		16   /* in bytes */
 #define UARTDM_TX_AIGN(x)		((x) & ~0x3) /* valid for > 1p3 */
 #define UARTDM_TX_MAX			256   /* in bytes, valid for <= 1p3 */
@@ -190,6 +198,7 @@ struct msm_port {
 	bool			break_detected;
 	struct msm_dma		tx_dma;
 	struct msm_dma		rx_dma;
+	int			tx_timeout;
 };
 
 #define UART_TO_MSM(uart_port)	container_of(uart_port, struct msm_port, uart)
@@ -393,12 +402,57 @@ no_rx:
 	memset(dma, 0, sizeof(*dma));
 }
 
+static unsigned int msm_serial_console_state[7];
+
+static void dump_serial_regs(struct uart_port *port)
+{
+	struct msm_port *msm_port = UART_TO_MSM(port);
+	unsigned int sr, isr, mr1, mr2, ncf, txfs, rxfs;
+
+	sr = msm_read(port, UART_SR);
+	isr = msm_read(port, UART_ISR);
+	mr1 = msm_read(port, UART_MR1);
+	mr2 = msm_read(port, UART_MR2);
+	ncf = msm_read(port, UARTDM_NCF_TX);
+	txfs = msm_read(port, UARTDM_TXFS);
+	rxfs = msm_read(port, UARTDM_RXFS);
+
+	msm_serial_console_state[0] = sr;
+	msm_serial_console_state[1] = isr;
+	msm_serial_console_state[2] = mr1;
+	msm_serial_console_state[3] = mr2;
+	msm_serial_console_state[4] = ncf;
+	msm_serial_console_state[5] = txfs;
+	msm_serial_console_state[6] = rxfs;
+
+	pr_info("Timeout: %d uS\n", msm_port->tx_timeout);
+	pr_info("SR:  %08x\n", sr);
+	pr_info("ISR: %08x\n", isr);
+	pr_info("MR1: %08x\n", mr1);
+	pr_info("MR2: %08x\n", mr2);
+	pr_info("NCF: %08x\n", ncf);
+	pr_info("TXFS: %08x\n", txfs);
+	pr_info("RXFS: %08x\n", rxfs);
+}
+
 static inline void msm_wait_for_xmitr(struct uart_port *port)
 {
+	struct msm_port *msm_port = UART_TO_MSM(port);
+	int count = 0;
+
 	while (!(msm_read(port, UART_SR) & UART_SR_TX_EMPTY)) {
 		if (msm_read(port, UART_ISR) & UART_ISR_TX_READY)
 			break;
 		udelay(1);
+		if (++count == msm_port->tx_timeout) {
+			msm_write(port, UART_CR_CMD_RESET_TX, UART_CR);
+			/* Allow port to be reset, before continuing */
+			mb();
+			pr_info("%s: UART TX Stuck, Resetting TX\n",
+							__func__);
+			dump_serial_regs(port);
+			break;
+		}
 	}
 	msm_write(port, UART_CR_CMD_RESET_TX_READY, UART_CR);
 }
@@ -733,12 +787,18 @@ static void msm_handle_rx_dm(struct uart_port *port, unsigned int misr)
 		for (i = 0; i < r_count; i++) {
 			char flag = TTY_NORMAL;
 
+#ifdef  SYSRQ_UART
+			if (msm_port->break_detected ) {
+#else
 			if (msm_port->break_detected && buf[i] == 0) {
+#endif
 				port->icount.brk++;
 				flag = TTY_BREAK;
 				msm_port->break_detected = false;
+#ifndef  SYSRQ_UART
 				if (uart_handle_break(port))
 					continue;
+#endif
 			}
 
 			if (!(port->read_status_mask & UART_SR_RX_BREAK))
@@ -942,6 +1002,9 @@ static irqreturn_t msm_uart_irq(int irq, void *dev_id)
 	if (misr & UART_IMR_RXBREAK_START) {
 		msm_port->break_detected = true;
 		msm_write(port, UART_CR_CMD_RESET_RXBREAK_START, UART_CR);
+#ifdef  SYSRQ_UART
+		uart_handle_break(port);
+#endif
 	}
 
 	if (misr & (UART_IMR_RXLEV | UART_IMR_RXSTALE)) {
@@ -1112,6 +1175,8 @@ static int msm_set_baud_rate(struct uart_port *port, unsigned int baud,
 	entry = msm_find_best_baud(port, baud, &rate);
 	clk_set_rate(msm_port->clk, rate);
 	baud = rate / 16 / entry->divisor;
+	/* Set timeout to be ~600x the character transmit time */
+	msm_port->tx_timeout = (1000000000 / baud) * 6;
 
 	spin_lock_irqsave(&port->lock, flags);
 	*saved_flags = flags;
@@ -1669,6 +1734,7 @@ static int __init msm_console_setup(struct console *co, char *options)
 	int bits = 8;
 	int parity = 'n';
 	int flow = 'n';
+	struct msm_port *msm_port;
 
 	if (unlikely(co->index >= UART_NR || co->index < 0))
 		return -ENXIO;
@@ -1677,6 +1743,10 @@ static int __init msm_console_setup(struct console *co, char *options)
 
 	if (unlikely(!port->membase))
 		return -ENXIO;
+
+	msm_port = UART_TO_MSM(port);
+	/* Set timeout to be ~600x the character transmit time */
+	msm_port->tx_timeout = (1000000000 / baud) * 6;
 
 	msm_serial_set_mnd_regs(port);
 

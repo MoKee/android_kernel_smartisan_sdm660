@@ -22,6 +22,7 @@
 #include <linux/qpnp/qpnp-revid.h>
 #include "fg-core.h"
 #include "fg-reg.h"
+#include "smb-lib.h"
 
 #define FG_GEN3_DEV_NAME	"qcom,fg-gen3"
 
@@ -702,17 +703,73 @@ static int fg_get_msoc_raw(struct fg_chip *chip, int *val)
 
 #define FULL_CAPACITY	100
 #define FULL_SOC_RAW	255
-static int fg_get_msoc(struct fg_chip *chip, int *msoc)
+#define EMPTY_CAPACITY  0
+
+static int adjustBatteryLevel(int level)
+{
+        if (EMPTY_CAPACITY == level) {
+                return 0;
+        } else if (level <= 0x07) {
+                return 1;
+        } else if (level >= 0xf9) {
+                level = 100;
+        } else {
+                level = level - 0x07;
+                /*2.459 = (0xf8-0x07) / 98*/
+                level = DIV_ROUND_CLOSEST(level * 1000, 2459) + 1;
+        }
+
+        return level;
+}
+
+/**
+ * Func: trim battery soc value.
+ *
+ * Trim Rule Used:
+ *      > Take [0 ~ 100] as an example:
+ *             Trim as 1    if:    [1, 5%)
+ *             Trim as 2~99 if:    [5%, 95%)
+ *             Trim as 100  if:    [95, 100)
+ * Para:
+ *             raw_soc: raw soc value
+ */
+int trim_bat_soc(int raw_soc)
+{
+        int new_soc = 0;
+
+        if (raw_soc <= 0)
+                return 0;
+        else if (raw_soc >= FULL_SOC_RAW)
+                return 100;
+
+        new_soc = adjustBatteryLevel(raw_soc);
+        return new_soc;
+}
+
+static int smart_fg_get_msoc(struct fg_chip *chip, int *msoc)
 {
 	int rc;
 
 	rc = fg_get_msoc_raw(chip, msoc);
 	if (rc < 0)
 		return rc;
-
-	*msoc = DIV_ROUND_CLOSEST(*msoc * FULL_CAPACITY, FULL_SOC_RAW);
+	*msoc = trim_bat_soc(*msoc);
+	//*msoc = DIV_ROUND_CLOSEST(*msoc * FULL_CAPACITY, FULL_SOC_RAW);
 	return 0;
 }
+
+
+static int fg_get_msoc(struct fg_chip *chip, int *msoc)
+{
+        int rc;
+
+        rc = fg_get_msoc_raw(chip, msoc);
+        if (rc < 0)
+                return rc;
+        *msoc = DIV_ROUND_CLOSEST(*msoc * FULL_CAPACITY, FULL_SOC_RAW);
+        return 0;
+}
+
 
 static bool is_batt_empty(struct fg_chip *chip)
 {
@@ -803,7 +860,7 @@ static bool is_debug_batt_id(struct fg_chip *chip)
 #define DEBUG_BATT_SOC	67
 #define BATT_MISS_SOC	50
 #define EMPTY_SOC	0
-static int fg_get_prop_capacity(struct fg_chip *chip, int *val)
+static int smart_fg_get_prop_capacity(struct fg_chip *chip, int *val)
 {
 	int rc, msoc;
 
@@ -813,7 +870,7 @@ static int fg_get_prop_capacity(struct fg_chip *chip, int *val)
 	}
 
 	if (chip->fg_restarting) {
-		*val = chip->last_soc;
+		*val = trim_bat_soc(chip->last_soc);
 		return 0;
 	}
 
@@ -832,16 +889,55 @@ static int fg_get_prop_capacity(struct fg_chip *chip, int *val)
 		return 0;
 	}
 
-	rc = fg_get_msoc(chip, &msoc);
+	rc = smart_fg_get_msoc(chip, &msoc);
 	if (rc < 0)
 		return rc;
 
-	if (chip->delta_soc > 0)
-		*val = chip->maint_soc;
-	else
-		*val = msoc;
+	*val = msoc;
+
 	return 0;
 }
+
+static int fg_get_prop_capacity(struct fg_chip *chip, int *val)
+{
+        int rc, msoc;
+
+        if (is_debug_batt_id(chip)) {
+                *val = DEBUG_BATT_SOC;
+                return 0;
+        }
+
+        if (chip->fg_restarting) {
+                *val = chip->last_soc;
+                return 0;
+        }
+
+        if (chip->battery_missing) {
+                *val = BATT_MISS_SOC;
+                return 0;
+        }
+
+        if (is_batt_empty(chip)) {
+                *val = EMPTY_SOC;
+                return 0;
+        }
+
+        if (chip->charge_full) {
+                *val = FULL_CAPACITY;
+                return 0;
+        }
+
+        rc = fg_get_msoc(chip, &msoc);
+        if (rc < 0)
+                return rc;
+
+        if (chip->delta_soc > 0)
+                *val = chip->maint_soc;
+        else
+                *val = msoc;
+        return 0;
+}
+
 
 #define DEFAULT_BATT_TYPE	"Unknown Battery"
 #define MISSING_BATT_TYPE	"Missing Battery"
@@ -866,7 +962,7 @@ static int fg_batt_missing_config(struct fg_chip *chip, bool enable)
 	int rc;
 
 	rc = fg_masked_write(chip, BATT_INFO_BATT_MISS_CFG(chip),
-			BM_FROM_BATT_ID_BIT, enable ? BM_FROM_BATT_ID_BIT : 0);
+			BM_FROM_THERM_BIT|BM_FROM_BATT_ID_BIT, enable ? BM_FROM_BATT_ID_BIT : 0);
 	if (rc < 0)
 		pr_err("Error in writing to %04x, rc=%d\n",
 			BATT_INFO_BATT_MISS_CFG(chip), rc);
@@ -955,9 +1051,10 @@ static int fg_get_batt_profile(struct fg_chip *chip)
 	rc = of_property_read_u32(profile_node, "qcom,fg-cc-cv-threshold-mv",
 			&chip->bp.vbatt_full_mv);
 	if (rc < 0) {
-		pr_err("battery cc_cv threshold unavailable, rc:%d\n", rc);
+		//pr_err("battery cc_cv threshold unavailable, rc:%d\n", rc);
 		chip->bp.vbatt_full_mv = -EINVAL;
 	}
+	chip->bp.vbatt_full_mv = 4402;
 
 	data = of_get_property(profile_node, "qcom,fg-profile-data", &len);
 	if (!data) {
@@ -1134,8 +1231,12 @@ static int fg_delta_bsoc_irq_en_cb(struct votable *votable, void *data,
 	if (enable) {
 		enable_irq(chip->irqs[BSOC_DELTA_IRQ].irq);
 		enable_irq_wake(chip->irqs[BSOC_DELTA_IRQ].irq);
+		chip->irq_wake = 1;
 	} else {
-		disable_irq_wake(chip->irqs[BSOC_DELTA_IRQ].irq);
+		if (chip->irq_wake) {
+			disable_irq_wake(chip->irqs[BSOC_DELTA_IRQ].irq);
+			chip->irq_wake = 0;
+		}
 		disable_irq(chip->irqs[BSOC_DELTA_IRQ].irq);
 	}
 
@@ -2145,6 +2246,108 @@ static void fg_batt_avg_update(struct fg_chip *chip)
 							msecs_to_jiffies(2000));
 }
 
+
+#define HIGH_BATTERY_OCV        4095000
+#define HIGH_BATTERY_OCV_FCC    2400000
+#define DEFAULT_BATTERY_OCV_FCC 3400000
+
+static void high_battery_ocv_work(struct fg_chip *chip)
+{
+        static bool tried_once = false;
+        int    vbatt_uv,rc;
+
+        rc = fg_get_sram_prop(chip, FG_SRAM_OCV, &vbatt_uv);
+        if (rc < 0) {
+                pr_err("failed to get battery voltage, rc=%d\n", rc);
+                vbatt_uv = HIGH_BATTERY_OCV;
+        }
+
+        if (vbatt_uv >= HIGH_BATTERY_OCV) {
+                if (!tried_once) {
+			rc = high_ocv_fcc_voter(HIGH_BATTERY_OCV_FCC);
+                        if (rc) {
+                                pr_err("failed to set fcc %d\n", rc);
+                                return;
+                        }
+
+                        tried_once = true;
+                }
+        } else {
+                if (tried_once) {
+			rc = high_ocv_fcc_voter(DEFAULT_BATTERY_OCV_FCC);
+                        if (rc) {
+                                pr_err("failed to set fcc %d\n", rc);
+                                return;
+                        }
+                        tried_once = false;
+                }
+        }
+
+}
+
+#define TEMP_BELOW_NEG_0          0
+#define TEMP_POS_0_TO_POS_15      1
+#define TEMP_POS_15_TO_POS_45     2
+#define TEMP_POS_45_TO_POS_60     3
+#define TEMP_ABOVE_POS_60         4
+
+#define TEMP_POS_60_THRESHOLD  60
+#define TEMP_POS_60_THRES_MINUS_X_DEGREE 58
+
+#define TEMP_POS_45_THRESHOLD  45
+#define TEMP_POS_45_THRES_MINUS_X_DEGREE 43
+
+#define TEMP_POS_0_THRESHOLD  0
+#define TEMP_POS_0_THRES_PLUS_X_DEGREE 2
+
+#define TEMP_POS_15_THRESHOLD  15
+#define TEMP_POS_15_THRES_PLUS_X_DEGREE 17
+
+int do_jeita_state_machine(int temperature)
+{
+        static int g_temp_status = TEMP_POS_15_TO_POS_45;
+
+        if (temperature >= TEMP_POS_60_THRESHOLD) {
+                g_temp_status = TEMP_ABOVE_POS_60;
+        } else if (temperature > TEMP_POS_45_THRESHOLD) {
+                if ((g_temp_status == TEMP_ABOVE_POS_60)
+                                && (temperature > TEMP_POS_60_THRES_MINUS_X_DEGREE)) {
+                        g_temp_status = TEMP_ABOVE_POS_60;
+                } else {
+                        g_temp_status = TEMP_POS_45_TO_POS_60;
+                }
+        } else if (temperature > TEMP_POS_15_THRESHOLD) {
+                if ((g_temp_status == TEMP_POS_45_TO_POS_60)
+                                && (temperature > TEMP_POS_45_THRES_MINUS_X_DEGREE)) {
+                        g_temp_status = TEMP_POS_45_TO_POS_60;
+                }else if((g_temp_status == TEMP_POS_0_TO_POS_15)
+                                && (temperature < TEMP_POS_15_THRES_PLUS_X_DEGREE)) {
+                        g_temp_status = TEMP_POS_0_TO_POS_15;
+                } else {
+                        g_temp_status = TEMP_POS_15_TO_POS_45;
+                }
+        } else if (temperature > TEMP_POS_0_THRESHOLD) {
+                if ((g_temp_status == TEMP_BELOW_NEG_0)
+                                && (temperature < TEMP_POS_0_THRES_PLUS_X_DEGREE)) {
+                        g_temp_status = TEMP_BELOW_NEG_0;
+                } else {
+                        g_temp_status = TEMP_POS_0_TO_POS_15;
+                }
+        } else {
+                g_temp_status = TEMP_BELOW_NEG_0;
+        }
+        return g_temp_status;
+}
+
+
+static void battery_jeita_work(int batt_temp)
+{
+	int status;
+
+	status = do_jeita_state_machine(batt_temp / 10);
+	jeita_fcc_voter(status);
+}
+
 static void status_change_work(struct work_struct *work)
 {
 	struct fg_chip *chip = container_of(work,
@@ -2157,6 +2360,7 @@ static void status_change_work(struct work_struct *work)
 		goto out;
 	}
 
+	high_battery_ocv_work(chip);
 	rc = power_supply_get_property(chip->batt_psy, POWER_SUPPLY_PROP_STATUS,
 			&prop);
 	if (rc < 0) {
@@ -2220,6 +2424,7 @@ static void status_change_work(struct work_struct *work)
 				rc);
 	}
 
+	battery_jeita_work(batt_temp);
 	fg_batt_avg_update(chip);
 
 out:
@@ -2439,12 +2644,12 @@ static bool is_profile_load_required(struct fg_chip *chip)
 		profiles_same = memcmp(chip->batt_profile, buf,
 					PROFILE_COMP_LEN) == 0;
 		if (profiles_same) {
-			fg_dbg(chip, FG_STATUS, "Battery profile is same, not loading it\n");
+			pr_err("Battery profile is same, not loading it\n");
 			return false;
 		}
 
 		if (!chip->dt.force_load_profile) {
-			pr_warn("Profiles doesn't match, skipping loading it since force_load_profile is disabled\n");
+			pr_err("Profiles doesn't match, skipping loading it since force_load_profile is disabled\n");
 			if (fg_profile_dump) {
 				pr_info("FG: loaded profile:\n");
 				dump_sram(buf, PROFILE_LOAD_WORD,
@@ -2456,7 +2661,7 @@ static bool is_profile_load_required(struct fg_chip *chip)
 			return false;
 		}
 
-		fg_dbg(chip, FG_STATUS, "Profiles are different, loading the correct one\n");
+		pr_err("Profiles are different, loading the correct one\n");
 	} else {
 		fg_dbg(chip, FG_STATUS, "Profile integrity bit is not set\n");
 		if (fg_profile_dump) {
@@ -2650,6 +2855,31 @@ resched:
 			msecs_to_jiffies(fg_sram_dump_period_ms));
 }
 
+int update_soc_period_ms = 20000;
+
+static void update_soc_work(struct work_struct *work)
+{
+        struct fg_chip *chip = container_of(work, struct fg_chip,
+                                            update_soc_work.work);
+	int msoc, rc = 0;
+
+	rc = smart_fg_get_prop_capacity(chip,&msoc);
+	if (rc < 0) {
+                pr_err("Error in getting capacity, rc=%d\n", rc);
+                goto resched;
+        }
+
+	if (msoc != chip->prev_soc) {
+                chip->prev_soc = msoc;
+		if (chip->fg_psy)
+			power_supply_changed(chip->fg_psy);
+        }
+resched:
+	 schedule_delayed_work(&chip->update_soc_work,
+			msecs_to_jiffies(update_soc_period_ms));
+}
+
+
 static int fg_sram_dump_sysfs(const char *val, const struct kernel_param *kp)
 {
 	int rc;
@@ -2771,7 +3001,7 @@ static int fg_get_time_to_full(struct fg_chip *chip, int *val)
 	s64 t_predicted_cc = 0, t_predicted_cv = 0;
 
 	if (chip->bp.float_volt_uv <= 0) {
-		pr_err("battery profile is not loaded\n");
+		//pr_err("battery profile is not loaded\n");
 		return -ENODATA;
 	}
 
@@ -3042,8 +3272,11 @@ static int fg_psy_get_property(struct power_supply *psy,
 	int rc = 0;
 
 	switch (psp) {
-	case POWER_SUPPLY_PROP_CAPACITY:
+	case POWER_SUPPLY_PROP_CAPACITY_RAW:
 		rc = fg_get_prop_capacity(chip, &pval->intval);
+		break;
+	case POWER_SUPPLY_PROP_CAPACITY:
+		rc = smart_fg_get_prop_capacity(chip, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		if (chip->battery_missing)
@@ -3192,6 +3425,7 @@ static int fg_notifier_cb(struct notifier_block *nb,
 }
 
 static enum power_supply_property fg_psy_props[] = {
+	POWER_SUPPLY_PROP_CAPACITY_RAW,
 	POWER_SUPPLY_PROP_CAPACITY,
 	POWER_SUPPLY_PROP_TEMP,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
@@ -4378,6 +4612,31 @@ static void fg_cleanup(struct fg_chip *chip)
 	dev_set_drvdata(chip->dev, NULL);
 }
 
+static ssize_t fg_store_registers(struct device *dev,
+        struct device_attribute *attr,
+        const char *buf, size_t size)
+{
+
+        int temp;
+
+        sscanf(buf, "%d", &temp);
+	//battery_jeita_work(temp);
+
+        return size;
+}
+
+
+static DEVICE_ATTR(qcom_fg, 0660, NULL,fg_store_registers);
+
+static struct attribute *fg_attributes[] = {
+        &dev_attr_qcom_fg.attr,
+        NULL,
+};
+
+static const struct attribute_group fg_attr_group = {
+        .attrs = fg_attributes,
+};
+
 static int fg_gen3_probe(struct platform_device *pdev)
 {
 	struct fg_chip *chip;
@@ -4471,6 +4730,7 @@ static int fg_gen3_probe(struct platform_device *pdev)
 	INIT_WORK(&chip->cycle_count_work, cycle_count_work);
 	INIT_DELAYED_WORK(&chip->batt_avg_work, batt_avg_work);
 	INIT_DELAYED_WORK(&chip->sram_dump_work, sram_dump_work);
+	INIT_DELAYED_WORK(&chip->update_soc_work, update_soc_work);
 
 	rc = fg_memif_init(chip);
 	if (rc < 0) {
@@ -4525,6 +4785,8 @@ static int fg_gen3_probe(struct platform_device *pdev)
 	/* Keep BATT_MISSING_IRQ disabled until we require it */
 	vote(chip->batt_miss_irq_en_votable, BATT_MISS_IRQ_VOTER, false, 0);
 
+	chip->irq_wake = 0;
+
 	rc = fg_debugfs_create(chip);
 	if (rc < 0) {
 		dev_err(chip->dev, "Error in creating debugfs entries, rc:%d\n",
@@ -4547,8 +4809,21 @@ static int fg_gen3_probe(struct platform_device *pdev)
 			pr_err("Error in configuring ESR filter rc:%d\n", rc);
 	}
 
+	rc = sysfs_create_group(&chip->dev->kobj, &fg_attr_group);
+	if (rc) {
+		pr_err("failed to register sysfs. err \n");
+	}
+
+	rc = sysfs_create_link(NULL,&chip->dev->kobj,"qcom-fg");
+	if (rc) {
+		pr_err("failed to sysfs_create_link sysfs. err\n");
+	}
+
 	device_init_wakeup(chip->dev, true);
+
 	schedule_delayed_work(&chip->profile_load_work, 0);
+	schedule_delayed_work(&chip->update_soc_work,
+                        msecs_to_jiffies(1000));
 
 	pr_debug("FG GEN3 driver probed successfully\n");
 	return 0;
@@ -4566,6 +4841,7 @@ static int fg_gen3_suspend(struct device *dev)
 	if (rc < 0)
 		pr_err("Error in configuring ESR timer, rc=%d\n", rc);
 
+	cancel_delayed_work(&chip->update_soc_work);
 	cancel_delayed_work_sync(&chip->batt_avg_work);
 	if (fg_sram_dump)
 		cancel_delayed_work_sync(&chip->sram_dump_work);
@@ -4584,6 +4860,8 @@ static int fg_gen3_resume(struct device *dev)
 	fg_circ_buf_clr(&chip->ibatt_circ_buf);
 	fg_circ_buf_clr(&chip->vbatt_circ_buf);
 	schedule_delayed_work(&chip->batt_avg_work, 0);
+	schedule_delayed_work(&chip->update_soc_work,
+                        msecs_to_jiffies(1000));
 	if (fg_sram_dump)
 		schedule_delayed_work(&chip->sram_dump_work,
 				msecs_to_jiffies(fg_sram_dump_period_ms));

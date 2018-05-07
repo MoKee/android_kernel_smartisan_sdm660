@@ -412,4 +412,6 @@ static inline bool ufs_qcom_cap_svs2(struct ufs_qcom_host *host)
 	return !!(host->caps & UFS_QCOM_CAP_SVS2);
 }
 
+int ufs_qcom_set_disbale_lpm(struct ufs_hba *hba, bool value);
+
 #endif /* UFS_QCOM_H_ */

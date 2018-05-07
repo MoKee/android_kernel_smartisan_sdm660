@@ -14,9 +14,9 @@ qcom,qrd_msm8998_skuk_3000mah {
 	/* QRD8997_ST1031GA_3000mAh_averaged_MasterSlave_Jan10th2017 */
 	qcom,max-voltage-uv = <4400000>;
 	qcom,fastchg-current-ma = <3000>;
-	qcom,batt-id-kohm = <68>;
+	qcom,batt-id-kohm = <10 100>;
 	qcom,battery-beta = <3380>;
-	qcom,battery-type = "qrd8997_st1031ga_3000mah";
+	qcom,battery-type = "smartisan_oscar_3000mah";
 	qcom,checksum = <0xD299>;
 	qcom,gui-version = "PMI8998GUI - 2.0.0.54";
 	qcom,fg-profile-data = [

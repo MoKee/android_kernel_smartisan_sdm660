@@ -48,6 +48,10 @@
 #define MSM_EEPROM_MEMORY_MAP_MAX_SIZE  80
 #define MSM_EEPROM_MAX_MEM_MAP_CNT      8
 
+//begin: JiGaoping add for write data to eeprom 2016-12-02
+#define MSM_EEPROM_WRITE_MAP_MAX_SIZE   80
+#define MSM_EEPROM_MAX_WRITE_MAP_CNT    8
+//end: JiGaoping add for write data to eeprom 2016-12-02
 enum msm_sensor_camera_id_t {
 	CAMERA_0,
 	CAMERA_1,
@@ -90,6 +94,7 @@ enum msm_camera_i2c_data_type {
 	MSM_CAMERA_I2C_BYTE_DATA = 1,
 	MSM_CAMERA_I2C_WORD_DATA,
 	MSM_CAMERA_I2C_DWORD_DATA,
+	MSM_CAMERA_I2C_SEQ_DATA,  //JiGaoping add for write data to eeprom 2016-12-02
 	MSM_CAMERA_I2C_SET_BYTE_MASK,
 	MSM_CAMERA_I2C_UNSET_BYTE_MASK,
 	MSM_CAMERA_I2C_SET_WORD_MASK,
@@ -283,6 +288,7 @@ struct msm_sensor_id_info_t {
 	unsigned short sensor_id_reg_addr;
 	unsigned short sensor_id;
 	unsigned short sensor_id_mask;
+	unsigned char module_id;
 };
 
 struct msm_camera_sensor_slave_info {
@@ -414,4 +420,26 @@ struct msm_camera_i2c_reg_setting_array {
 	unsigned short delay;
 };
 
+//begin: JiGaoping add for write data to eeprom 2016-12-02
+struct msm_eeprom_i2c_seq_reg_array {
+	unsigned short reg_addr;
+	enum msm_camera_i2c_reg_addr_type addr_type;
+	enum msm_camera_i2c_operation i2c_operation;
+	unsigned char reg_data[I2C_SEQ_REG_DATA_MAX];
+	unsigned short reg_data_size;
+	unsigned short delay;
+};
+
+struct msm_eeprom_write_map_t {
+	int slave_addr;
+	struct msm_eeprom_i2c_seq_reg_array
+		mem_settings[MSM_EEPROM_WRITE_MAP_MAX_SIZE];
+	uint32_t write_map_size;
+};
+
+struct msm_eeprom_write_map_array {
+	struct msm_eeprom_write_map_t write_map[MSM_EEPROM_MAX_WRITE_MAP_CNT];
+	uint32_t msm_size_of_max_mappings;
+};
+//end: JiGaoping add for write data to eeprom 2016-12-02
 #endif

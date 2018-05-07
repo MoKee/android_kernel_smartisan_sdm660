@@ -289,6 +289,7 @@ struct msm_eeprom_info_t {
 	struct msm_sensor_power_setting_array *power_setting_array;
 	enum i2c_freq_mode_t i2c_freq_mode;
 	struct msm_eeprom_memory_map_array *mem_map_array;
+	struct msm_eeprom_write_map_array  *write_map_array;  //JiGaoping add for write data to eeprom 2016-12-02
 };
 
 struct msm_ir_led_cfg_data_t {

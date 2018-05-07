@@ -213,12 +213,6 @@
 				qcom,max-current = <12>;
 				qcom,default-state = "off";
 				linux,name = "red";
-				qcom,start-idx = <0>;
-				qcom,idx-len = <22>;
-				qcom,duty-pcts =
-					[01 0a 14 1e 28 32 3c 46 50 5a 64
-					64 5a 50 46 3c 32 28 1e 14 0a 01];
-				qcom,use-blink;
 			};
 
 			green_led: qcom,rgb_1 {
@@ -241,6 +235,12 @@
 				qcom,max-current = <12>;
 				qcom,default-state = "off";
 				linux,name = "blue";
+				qcom,start-idx = <0>;
+				qcom,idx-len = <22>;
+				qcom,duty-pcts =
+					[01 0a 14 1e 28 32 3c 46 50 5a 64
+					64 5a 50 46 3c 32 28 1e 14 0a 01];
+				qcom,use-blink;
 			};
 		};
 
@@ -264,11 +264,13 @@
 			qcom,dim-mode = "hybrid";
 			qcom,hyb-thres = <625>;
 			qcom,sync-dly-us = <800>;
-			qcom,fs-curr-ua = <25000>;
+			qcom,fs-curr-ua = <20000>;
 			qcom,cons-sync-write-delay-us = <1000>;
-			qcom,led-strings-list = [00 01 02];
+			qcom,led-strings-list = [00 01];
+			qcom,en-ext-pfet-sc-pro;
 			qcom,loop-auto-gm-en;
 			qcom,pmic-revid = <&pm660l_revid>;
+			qcom,en-cabc;
 			status = "ok";
 		};
 
@@ -294,10 +296,10 @@
 			pm660l_flash0: qcom,flash_0 {
 				label = "flash";
 				qcom,led-name = "led:flash_0";
-				qcom,max-current = <1500>;
+				qcom,max-current = <1000>;
 				qcom,default-led-trigger = "flash0_trigger";
 				qcom,id = <0>;
-				qcom,current-ma = <1000>;
+				qcom,current-ma = <625>;
 				qcom,duration-ms = <1280>;
 				qcom,ires-ua = <12500>;
 				qcom,hdrm-voltage-mv = <325>;
@@ -307,10 +309,10 @@
 			pm660l_flash1: qcom,flash_1 {
 				label = "flash";
 				qcom,led-name = "led:flash_1";
-				qcom,max-current = <1500>;
+				qcom,max-current = <1000>;
 				qcom,default-led-trigger = "flash1_trigger";
 				qcom,id = <1>;
-				qcom,current-ma = <1000>;
+				qcom,current-ma = <625>;
 				qcom,duration-ms = <1280>;
 				qcom,ires-ua = <12500>;
 				qcom,hdrm-voltage-mv = <325>;
@@ -320,10 +322,10 @@
 			pm660l_flash2: qcom,flash_2 {
 				label = "flash";
 				qcom,led-name = "led:flash_2";
-				qcom,max-current = <750>;
+				qcom,max-current = <1000>;
 				qcom,default-led-trigger = "flash2_trigger";
 				qcom,id = <2>;
-				qcom,current-ma = <500>;
+				qcom,current-ma = <625>;
 				qcom,duration-ms = <1280>;
 				qcom,ires-ua = <12500>;
 				qcom,hdrm-voltage-mv = <325>;
@@ -333,10 +335,10 @@
 			pm660l_torch0: qcom,torch_0 {
 				label = "torch";
 				qcom,led-name = "led:torch_0";
-				qcom,max-current = <500>;
+				qcom,max-current = <150>;
 				qcom,default-led-trigger = "torch0_trigger";
 				qcom,id = <0>;
-				qcom,current-ma = <300>;
+				qcom,current-ma = <50>;
 				qcom,ires-ua = <12500>;
 				qcom,hdrm-voltage-mv = <325>;
 				qcom,hdrm-vol-hi-lo-win-mv = <100>;
@@ -345,10 +347,10 @@
 			pm660l_torch1: qcom,torch_1 {
 				label = "torch";
 				qcom,led-name = "led:torch_1";
-				qcom,max-current = <500>;
+				qcom,max-current = <150>;
 				qcom,default-led-trigger = "torch1_trigger";
 				qcom,id = <1>;
-				qcom,current-ma = <300>;
+				qcom,current-ma = <50>;
 				qcom,ires-ua = <12500>;
 				qcom,hdrm-voltage-mv = <325>;
 				qcom,hdrm-vol-hi-lo-win-mv = <100>;
@@ -357,10 +359,10 @@
 			pm660l_torch2: qcom,torch_2 {
 				label = "torch";
 				qcom,led-name = "led:torch_2";
-				qcom,max-current = <500>;
+				qcom,max-current = <150>;
 				qcom,default-led-trigger = "torch2_trigger";
 				qcom,id = <2>;
-				qcom,current-ma = <300>;
+				qcom,current-ma = <50>;
 				qcom,ires-ua = <12500>;
 				qcom,hdrm-voltage-mv = <325>;
 				qcom,hdrm-vol-hi-lo-win-mv = <100>;

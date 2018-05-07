@@ -29,6 +29,58 @@ int sysctl_nr_open_min = BITS_PER_LONG;
 #define __const_max(x, y) ((x) < (y) ? (x) : (y))
 int sysctl_nr_open_max = __const_max(INT_MAX, ~(size_t)0/sizeof(void *)) &
 			 -BITS_PER_LONG;
+int fs_dump;
+
+// get full path from inode
+char *getfullpath(struct inode *inod,char* buffer,int len)  
+{  
+    struct hlist_node* plist = NULL;  
+    struct dentry* tmp = NULL;  
+    struct dentry* dent = NULL;  
+    struct dentry* parent = NULL;  
+    char* name = NULL;  
+    char* pbuf = buffer + len - 1;  
+    struct inode* pinode = inod;  
+     int length = 0;  
+
+     buffer[len - 1] = '\0';  
+     if(pinode == NULL)  
+         return NULL;  
+
+     hlist_for_each(plist,&pinode->i_dentry)  
+     {  
+         tmp = hlist_entry(plist,struct dentry,d_u.d_alias);  
+         if(tmp->d_inode == pinode)  
+         {  
+             dent = tmp;  
+             break;  
+         }  
+     } 
+     if(dent == NULL)  
+     {  
+         return NULL;  
+     }  
+     while(pinode && pinode ->i_ino != 2 && pinode->i_ino != 1 && pinode->i_ino != 3)  
+     {  
+         if(dent == NULL)  
+             break;  
+         name = (char*)(dent->d_name.name);  
+         if(!name)  
+             break;  
+         pbuf = pbuf - strlen(name) - 1;  
+         *pbuf = '/';  
+         memcpy(pbuf+1,name,strlen(name));  
+         length += strlen(name) + 1;  
+
+         if((parent = dent->d_parent))  
+         {  
+             dent = parent;  
+             pinode = dent->d_inode;  
+         }  
+     }  
+
+     return pbuf;  
+}  
 
 static void *alloc_fdmem(size_t size)
 {

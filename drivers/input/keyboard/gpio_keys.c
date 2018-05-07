@@ -356,6 +356,7 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 			input_event(input, type, button->code, button->value);
 	} else {
 		input_event(input, type, button->code, !!state);
+		pr_info("Button:EV_KEY (keycode = %d  value = %d)\n", button->code, !!state);
 	}
 	input_sync(input);
 }

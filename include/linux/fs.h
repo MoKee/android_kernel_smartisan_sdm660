@@ -66,6 +66,45 @@ extern int leases_enable, lease_break_time;
 extern int sysctl_protected_symlinks;
 extern int sysctl_protected_hardlinks;
 
+// used for fs, block, emmc, ufs log control
+extern int fs_dump;
+enum {
+    FS_LOG_BLOCK =             1<<0,	                   /*Block layer log*/
+    FS_LOG_F2FS_WRITE =        1<<1,	                   /*F2FS layer write log*/
+    FS_LOG_EXT4_WRITE =        1<<2,	                   /*EXT4 layer write log*/
+    FS_LOG_UFS_RW =            1<<3,	                   /*UFS layer rw log*/
+
+    FS_LOG_UNDEF_4 =           1<<4,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_5 =           1<<5,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_6 =           1<<6,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_7 =           1<<7,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_8 =           1<<8,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_9 =           1<<9,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_10 =          1<<10,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_11 =          1<<11,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_12 =          1<<12,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_13 =          1<<13,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_14 =          1<<14,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_15 =          1<<15,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_16 =          1<<16,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_17 =          1<<17,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_18 =          1<<18,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_19 =          1<<19,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_20 =          1<<20,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_21 =          1<<21,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_22 =          1<<22,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_23 =          1<<23,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_24 =          1<<24,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_25 =          1<<25,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_26 =          1<<26,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_27 =          1<<27,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_28 =          1<<28,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_29 =          1<<29,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_30 =          1<<30,	                   /*Undef bit for future use*/
+    FS_LOG_UNDEF_LAST =        1<<31	                   /*Undef bit for future use*/
+};
+
+
 struct buffer_head;
 typedef int (get_block_t)(struct inode *inode, sector_t iblock,
 			struct buffer_head *bh_result, int create);
@@ -137,6 +176,12 @@ typedef void (dax_iodone_t)(struct buffer_head *bh_map, int uptodate);
 #define FMODE_CAN_READ          ((__force fmode_t)0x20000)
 /* Has write method(s) */
 #define FMODE_CAN_WRITE         ((__force fmode_t)0x40000)
+
+/* File hasn't page cache and can't be mmaped, for stackable filesystem */
+#define FMODE_NONMAPPABLE        ((__force fmode_t)0x400000)
+ 
+/* File page don't need to be cached, for stackable filesystem's lower file */
+#define FMODE_NONCACHEABLE     ((__force fmode_t)0x800000)
 
 /* File was opened by fanotify and shouldn't generate fanotify events */
 #define FMODE_NONOTIFY		((__force fmode_t)0x4000000)
@@ -876,6 +921,7 @@ struct file {
 		struct rcu_head 	fu_rcuhead;
 	} f_u;
 	struct path		f_path;
+#define f_dentry	f_path.dentry
 	struct inode		*f_inode;	/* cached value */
 	const struct file_operations	*f_op;
 
@@ -1673,6 +1719,7 @@ struct file_operations {
 #ifndef CONFIG_MMU
 	unsigned (*mmap_capabilities)(struct file *);
 #endif
+	struct file* (*get_lower_file)(struct file *f);
 };
 
 struct inode_operations {
@@ -1757,6 +1804,7 @@ struct super_operations {
 				  struct shrink_control *);
 	long (*free_cached_objects)(struct super_block *,
 				    struct shrink_control *);
+	long (*unlink_callback)(struct super_block *, char *);
 };
 
 /*
@@ -2896,6 +2944,7 @@ extern int file_update_time(struct file *file);
 extern int generic_show_options(struct seq_file *m, struct dentry *root);
 extern void save_mount_options(struct super_block *sb, char *options);
 extern void replace_mount_options(struct super_block *sb, char *options);
+extern char *getfullpath(struct inode *inod,char* buffer,int len);  
 
 static inline bool io_is_direct(struct file *filp)
 {

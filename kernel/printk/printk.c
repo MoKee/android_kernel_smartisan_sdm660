@@ -230,6 +230,7 @@ enum log_flags {
 
 struct printk_log {
 	u64 ts_nsec;		/* timestamp in nanoseconds */
+        u8 pid_info[32];
 	u16 len;		/* length of entire record */
 	u16 text_len;		/* length of text buffer */
 	u16 dict_len;		/* length of dictionary buffer */
@@ -298,6 +299,17 @@ u32 log_buf_len_get(void)
 {
 	return log_buf_len;
 }
+
+char * log_first_idx_get(void)
+{
+	return (char *)&log_first_idx;
+}
+
+char * log_next_idx_get(void)
+{
+	return (char *)&log_next_idx;
+}
+
 
 /* human readable text of the record */
 static char *log_text(const struct printk_log *msg)
@@ -457,6 +469,7 @@ static int log_store(int facility, int level,
 
 	/* fill message */
 	msg = (struct printk_log *)(log_buf + log_next_idx);
+        sprintf(msg->pid_info, "[%5d|%-15s] ", current->pid, current->comm);
 	memcpy(log_text(msg), text, text_len);
 	msg->text_len = text_len;
 	if (trunc_msg_len) {
@@ -1041,7 +1054,7 @@ static inline void boot_delay_msec(int level)
 static bool printk_time = IS_ENABLED(CONFIG_PRINTK_TIME);
 module_param_named(time, printk_time, bool, S_IRUGO | S_IWUSR);
 
-static size_t print_time(u64 ts, char *buf)
+static size_t print_time(const char *pid_info, u64 ts, char *buf)
 {
 	unsigned long rem_nsec;
 
@@ -1051,10 +1064,10 @@ static size_t print_time(u64 ts, char *buf)
 	rem_nsec = do_div(ts, 1000000000);
 
 	if (!buf)
-		return snprintf(NULL, 0, "[%5lu.000000] ", (unsigned long)ts);
+		return snprintf(NULL, 0, "[%5lu.000000] %s", (unsigned long)ts, pid_info);
 
-	return sprintf(buf, "[%5lu.%06lu] ",
-		       (unsigned long)ts, rem_nsec / 1000);
+	return sprintf(buf, "[%5lu.%06lu] %s",
+		       (unsigned long)ts, rem_nsec / 1000, pid_info);
 }
 
 static size_t print_prefix(const struct printk_log *msg, bool syslog, char *buf)
@@ -1076,7 +1089,7 @@ static size_t print_prefix(const struct printk_log *msg, bool syslog, char *buf)
 		}
 	}
 
-	len += print_time(msg->ts_nsec, buf ? buf + len : NULL);
+	len += print_time(msg->pid_info, msg->ts_nsec, buf ? buf + len : NULL);
 	return len;
 }
 
@@ -1560,6 +1573,7 @@ static inline void printk_delay(void)
  */
 static struct cont {
 	char buf[LOG_LINE_MAX];
+        char pid_info[32];
 	size_t len;			/* length == 0 means unused buffer */
 	size_t cons;			/* bytes written to console */
 	struct task_struct *owner;	/* task of first print*/
@@ -1621,6 +1635,7 @@ static bool cont_add(int facility, int level, const char *text, size_t len)
 		cont.flags = 0;
 		cont.cons = 0;
 		cont.flushed = false;
+                sprintf(cont.pid_info, "[%5d|%-15s] ", current->pid, current->comm);
 	}
 
 	memcpy(cont.buf + cont.len, text, len);
@@ -1638,7 +1653,7 @@ static size_t cont_print_text(char *text, size_t size)
 	size_t len;
 
 	if (cont.cons == 0 && (console_prev & LOG_NEWLINE)) {
-		textlen += print_time(cont.ts_nsec, text);
+		textlen += print_time(cont.pid_info, cont.ts_nsec, text);
 		size -= textlen;
 	}
 

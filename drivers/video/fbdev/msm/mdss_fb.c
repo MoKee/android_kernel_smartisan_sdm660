@@ -53,8 +53,10 @@
 #include "mdss_mdp_splash_logo.h"
 #define CREATE_TRACE_POINTS
 #include "mdss_debug.h"
+#include "dsi_access.h"
 #include "mdss_smmu.h"
 #include "mdss_mdp.h"
+#include "mdss_dsi.h"
 
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MDSS_FB_NUM 3
@@ -84,7 +86,6 @@
 
 static struct fb_info *fbi_list[MAX_FBI_LIST];
 static int fbi_list_index;
-
 static u32 mdss_fb_pseudo_palette[16] = {
 	0x00000000, 0xffffffff, 0xffffffff, 0xffffffff,
 	0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff,
@@ -92,8 +93,39 @@ static u32 mdss_fb_pseudo_palette[16] = {
 	0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff
 };
 
-static struct msm_mdp_interface *mdp_instance;
+static u32 gamma_luminance_TM[] = {
+	0,    10,    21,   38,   138,  168,  190,  270,
+	340,  410,  490,  550,  600,  680,  810,  900,
+	1005,  1135,  1245, 1385, 1529, 1672, 1845, 2030,
+	2230, 2425, 2633, 2799, 3123, 3304, 3534, 3786,
+	4095
+};
 
+static u32 gamma_luminance_TXD[] = {
+	0,    12,    24,   43,   146,  168,  190,  275,
+	354,  425,  515,  568,  620,  712,  845,  945,
+	1055,  1195,  1315, 1442, 1599, 1762, 1948, 2125,
+	2265, 2475, 2673, 2820, 3120, 3300, 3530, 3780,
+	4095
+};
+
+static u32 gamma_luminance_BOE[] = {
+	0,    12,    24,   43,   148,  170,  193,  278,
+	358,  430,  518,  573,  626,  719,  855,  958,
+	1060,  1200,  1330, 1465, 1640, 1778, 1988, 2160,
+	2315, 2518, 2730, 2865, 3165, 3360, 3590, 3845,
+	4095
+};
+
+static int ie_set_boot = 0;
+static int show_ie_level = 0;
+extern int lcd_id;
+int sre_mode;
+int is_eye_care_mode = 0;
+int glove_open = -1;
+int brightnes_set_value = 0;
+static struct msm_mdp_interface *mdp_instance;
+extern void mdss_dsi_panel_ie_level_setting(struct mdss_panel_data *pdata, int level);
 static int mdss_fb_register(struct msm_fb_data_type *mfd);
 static int mdss_fb_open(struct fb_info *info, int user);
 static int mdss_fb_release(struct fb_info *info, int user);
@@ -278,6 +310,7 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 {
 	struct msm_fb_data_type *mfd = dev_get_drvdata(led_cdev->dev->parent);
 	int bl_lvl;
+	int temp;
 
 	if (mfd->boot_notification_led) {
 		led_trigger_event(mfd->boot_notification_led, 0);
@@ -287,6 +320,10 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 	if (value > mfd->panel_info->brightness_max)
 		value = mfd->panel_info->brightness_max;
 
+	if((value > 0) && (value < 10))
+		value = 10;
+
+        brightnes_set_value = value;
 	/* This maps android backlight level 0 to 255 into
 	   driver backlight level 0 to bl_max with rounding */
 	MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
@@ -294,6 +331,23 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 
 	if (!bl_lvl && value)
 		bl_lvl = 1;
+
+	temp = value/8;
+	if (value < 255)
+	{
+		if (lcd_id == 11)
+			bl_lvl = gamma_luminance_TM[temp] + (gamma_luminance_TM[temp+1] - gamma_luminance_TM[temp]) * (value%8)/8;
+		else if (lcd_id == 12)
+			bl_lvl = gamma_luminance_TXD[temp] + (gamma_luminance_TXD[temp+1] - gamma_luminance_TXD[temp]) * (value%8)/8;
+		else if (lcd_id == 13)
+			bl_lvl = gamma_luminance_BOE[temp] + (gamma_luminance_BOE[temp+1] - gamma_luminance_BOE[temp]) * (value%8)/8;
+		else
+			pr_info("incorrect panel id for osborn backlight selection\n");
+	}
+	else
+		bl_lvl = 4095;
+
+	//printk("backlight curve: after bl_lvl = %d value = %d\n",bl_lvl,value);
 
 	if (!IS_CALIB_MODE_BL(mfd) && (!mfd->ext_bl_ctrl || !value ||
 							!mfd->bl_level)) {
@@ -307,13 +361,7 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 static enum led_brightness mdss_fb_get_bl_brightness(
 	struct led_classdev *led_cdev)
 {
-	struct msm_fb_data_type *mfd = dev_get_drvdata(led_cdev->dev->parent);
-	enum led_brightness value;
-
-	MDSS_BL_TO_BRIGHT(value, mfd->bl_level_usr, mfd->panel_info->bl_max,
-			  mfd->panel_info->brightness_max);
-
-	return value;
+        return brightnes_set_value;
 }
 
 static struct led_classdev backlight_led = {
@@ -839,6 +887,94 @@ static ssize_t mdss_fb_get_dfps_mode(struct device *dev,
 	return ret;
 }
 
+static ssize_t mdss_fb_get_panelid(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int ret;
+	ret = scnprintf(buf, PAGE_SIZE, "%d", lcd_id);
+
+	return ret;
+}
+
+static ssize_t mdss_fb_get_panel_regid(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int ret;
+	char rx_buf;
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+	struct fb_info *fbi = dev_get_drvdata(dev);
+	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
+	struct mdss_panel_data *pdata;
+	char panel1 = 0xda;
+	char panel2 = 0x00;
+	int len = 1;
+
+
+	pdata = dev_get_platdata(&mfd->pdev->dev);
+	if (!pdata) {
+		pr_err("no panel connected!\n");
+		return ret;
+	}
+
+	if (pdata == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return -EINVAL;
+	}
+
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata, panel_data);
+
+	mdss_dsi_panel_cmd_read(ctrl_pdata, panel1, panel2, NULL, &rx_buf, len);
+	if(rx_buf == 0x80)
+		rx_buf = 11;
+	else if(rx_buf == 0x81)
+		rx_buf = 12;
+	else if(rx_buf == 0x82)
+		rx_buf = 13;
+
+	ret = scnprintf(buf, PAGE_SIZE, "%d\n", rx_buf);
+
+	return ret;
+}
+
+static ssize_t mdss_fb_set_ie_level(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t len)
+{
+	struct fb_info *fbi = dev_get_drvdata(dev);
+	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
+	struct mdss_panel_data *pdata;
+	u32 ie_level;
+
+	pdata = dev_get_platdata(&mfd->pdev->dev);
+	if (!pdata) {
+		pr_err("no panel connected!\n");
+		return len;
+	}
+
+	if (sscanf(buf, "%d", &ie_level) != 1) {
+		pr_err("sccanf buf error!\n");
+		return len;
+	}
+
+	if (mfd->panel_power_state != 0)
+		mdss_dsi_panel_ie_level_setting(pdata, ie_level);
+	else
+		ie_set_boot = 0;
+
+	show_ie_level = ie_level;
+	return len;
+}
+
+
+static ssize_t mdss_fb_get_ie_level(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int ret;
+
+	ret = scnprintf(buf, PAGE_SIZE, "%d\n", sre_mode);
+
+	return ret;
+}
+
 static ssize_t mdss_fb_change_persist_mode(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t len)
 {
@@ -934,6 +1070,10 @@ static DEVICE_ATTR(measured_fps, S_IRUGO | S_IWUSR | S_IWGRP,
 static DEVICE_ATTR(msm_fb_persist_mode, S_IRUGO | S_IWUSR,
 	mdss_fb_get_persist_mode, mdss_fb_change_persist_mode);
 static DEVICE_ATTR(idle_power_collapse, S_IRUGO, mdss_fb_idle_pc_notify, NULL);
+static DEVICE_ATTR(msm_fb_ie_level, S_IRUGO | S_IWUSR,
+	mdss_fb_get_ie_level, mdss_fb_set_ie_level);
+static DEVICE_ATTR(show_panel_id, S_IRUGO , mdss_fb_get_panelid, NULL);
+static DEVICE_ATTR(show_panel_regid, S_IRUGO , mdss_fb_get_panel_regid, NULL);
 
 static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_msm_fb_type.attr,
@@ -949,6 +1089,9 @@ static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_measured_fps.attr,
 	&dev_attr_msm_fb_persist_mode.attr,
 	&dev_attr_idle_power_collapse.attr,
+	&dev_attr_msm_fb_ie_level.attr,
+	&dev_attr_show_panel_id.attr,
+	&dev_attr_show_panel_regid.attr,
 	NULL,
 };
 
@@ -956,10 +1099,23 @@ static struct attribute_group mdss_fb_attr_group = {
 	.attrs = mdss_fb_attrs,
 };
 
+#ifdef DSI_ACCESS
+extern struct dsi_access dsi_access;
+#endif
 static int mdss_fb_create_sysfs(struct msm_fb_data_type *mfd)
 {
 	int rc;
-
+#ifdef DSI_ACCESS
+	if (mfd->panel.type == MIPI_VIDEO_PANEL ||
+			mfd->panel.type == MIPI_CMD_PANEL) {
+		dsi_access.sysfs_dir = kobject_create_and_add(DSI_ACCESS_DIR,
+				&mfd->fbi->dev->kobj);
+		rc = sysfs_create_group(dsi_access.sysfs_dir,
+				&dsi_access.attr_group);
+		if (rc)
+			pr_err("dsi_access sysfs creation failed, rc=%d\n", rc);
+	}
+#endif
 	rc = sysfs_create_group(&mfd->fbi->dev->kobj, &mdss_fb_attr_group);
 	if (rc)
 		pr_err("sysfs group creation failed, rc=%d\n", rc);
@@ -1779,6 +1935,17 @@ void mdss_fb_update_backlight(struct msm_fb_data_type *mfd)
 			if (mfd->mdp.ad_calc_bl)
 				(*mfd->mdp.ad_calc_bl)(mfd, temp, &temp,
 								&bl_notify);
+			if (ie_set_boot < 1) {
+				pr_info("show_ie_level is %d\n", show_ie_level);
+				ie_set_boot++;
+				if (show_ie_level != 18)
+					mdss_dsi_panel_ie_level_setting(pdata, show_ie_level);
+			}else{
+				if (glove_open == 1)
+					mdss_dsi_panel_ie_level_setting(pdata, 261);
+				else if(glove_open == 0)
+					mdss_dsi_panel_ie_level_setting(pdata, 260);
+			}
 			if (bl_notify)
 				mdss_fb_bl_update_notify(mfd,
 					NOTIFY_TYPE_BL_AD_ATTEN_UPDATE);
@@ -1857,6 +2024,8 @@ static int mdss_fb_blank_blank(struct msm_fb_data_type *mfd,
 {
 	int ret = 0;
 	int cur_power_state, current_bl;
+	struct fb_event event;
+	event.info = mfd->fbi;
 
 	if (!mfd)
 		return -EINVAL;
@@ -1872,6 +2041,11 @@ static int mdss_fb_blank_blank(struct msm_fb_data_type *mfd,
 	if (cur_power_state == req_power_state) {
 		pr_debug("No change in power state\n");
 		return 0;
+	}
+
+	if (mfd->index == 0) {
+		printk("call LCD_EVENT_OFF by fb\n");
+		fb_notifier_call_chain(LCD_EVENT_OFF, &event);
 	}
 
 	mutex_lock(&mfd->update.lock);
@@ -1913,6 +2087,8 @@ static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
 {
 	int ret = 0;
 	int cur_power_state;
+	struct fb_event event;
+	event.info = mfd->fbi;
 
 	if (!mfd)
 		return -EINVAL;
@@ -1993,6 +2169,10 @@ static int mdss_fb_blank_unblank(struct msm_fb_data_type *mfd)
 		mutex_unlock(&mfd->bl_lock);
 	}
 
+	if (mfd->index == 0) {
+		printk("call LCD_EVENT_ON by fb\n");
+		fb_notifier_call_chain(LCD_EVENT_ON, &event);
+	}
 error:
 	return ret;
 }
@@ -4243,6 +4423,21 @@ end:
 	return ret;
 }
 
+
+static int mdss_fb_ie_setting(struct mdss_panel_data *pdata, void __user *p)
+{
+               int ie_level;
+               int ret;
+
+               ret = copy_from_user(&ie_level, p, sizeof(ie_level));
+               if (ret)
+                       return ret;
+               if (ie_set_boot != 0)
+                       mdss_dsi_panel_ie_level_setting(pdata, ie_level);
+               show_ie_level = ie_level;
+               return 0;
+}
+
 static int mdss_fb_set_lut(struct fb_info *info, void __user *p)
 {
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
@@ -5039,6 +5234,10 @@ int mdss_fb_do_ioctl(struct fb_info *info, unsigned int cmd,
 
 	case MSMFB_ASYNC_POSITION_UPDATE:
 		ret = mdss_fb_async_position_update_ioctl(info, argp);
+		break;
+
+	case SMARTISAN_IE_SET:
+		mdss_fb_ie_setting(pdata, argp);
 		break;
 
 	default:
