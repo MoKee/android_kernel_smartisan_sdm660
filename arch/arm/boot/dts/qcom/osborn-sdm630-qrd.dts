@@ -1,0 +1,81 @@
+/* Copyright (c) 2017, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+
+/dts-v1/;
+
+#include "sdm630.dtsi"
+#include "sdm630-qrd.dtsi"
+#include "oscar-pinctrl.dtsi"
+#include "oscar-audio.dtsi"
+#include "oscar-camera.dtsi"
+#include "oscar-charging.dtsi"
+#include "oscar-fingerprint.dtsi"
+#include "oscar-haptics.dtsi"
+#include "oscar-key.dtsi"
+#include "oscar-leds.dtsi"
+#include "oscar-panels.dtsi"
+#include "oscar-common.dtsi"
+#include "osborn-unused-gpio.dtsi"
+
+/ {
+	model = "Qualcomm Technologies, Inc. SDM 630 PM660 + PM660L QRD";
+	compatible = "qcom,sdm630-qrd", "qcom,sdm630", "qcom,qrd";
+	qcom,board-id = <0x0002000b 0x00>;
+	qcom,pmic-id = <0x0001001b 0x0001011a 0x0 0x0>;
+};
+
+&ufsphy1 {
+	status = "disabled";
+};
+
+&pm660_gpios {
+	gpio@ca00 {
+		status = "disabled";
+	};
+};
+
+&dsi_td4310_1080p_vid {
+	qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_wled";
+	qcom,mdss-dsi-bl-min-level = <1>;
+	qcom,mdss-dsi-bl-max-level = <4095>;
+	qcom,mdss-dsi-panel-timings-phy-v2 = [24 1f 08 09 05 03 04 a0
+		24 1f 08 09 05 03 04 a0
+		24 1f 08 09 05 03 04 a0
+		24 1f 08 09 05 03 04 a0
+		24 1b 08 09 05 03 04 a0];
+	qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
+};
+
+&dsi_txd_td4310_1080p_vid {
+	qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_wled";
+	qcom,mdss-dsi-bl-min-level = <1>;
+	qcom,mdss-dsi-bl-max-level = <4095>;
+	qcom,mdss-dsi-panel-timings-phy-v2 = [25 1f 09 0a 06 03 04 a0
+		24 1f 09 0a 06 03 04 a0
+		24 1f 09 0a 06 03 04 a0
+		24 1f 09 0a 06 03 04 a0
+		25 1d 08 0a 06 03 04 a0];
+	qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
+};
+
+&dsi_boe_td4310_1080p_vid {
+	qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_wled";
+	qcom,mdss-dsi-bl-min-level = <1>;
+	qcom,mdss-dsi-bl-max-level = <4095>;
+	qcom,mdss-dsi-panel-timings-phy-v2 = [25 1f 09 0a 06 03 04 a0
+		25 1f 09 0a 06 03 04 a0
+		25 1f 09 0a 06 03 04 a0
+		25 1f 09 0a 06 03 04 a0
+		25 1d 08 0a 06 03 04 a0];
+	qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
+};
