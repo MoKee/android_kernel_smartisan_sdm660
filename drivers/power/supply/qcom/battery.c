@@ -26,6 +26,9 @@
 #include <linux/pm_wakeup.h>
 #include <linux/slab.h>
 #include <linux/pmic-voter.h>
+#ifdef CONFIG_VENDOR_SMARTISAN
+#include "smb-lib.h"
+#endif
 
 #define DRV_MAJOR_VERSION	1
 #define DRV_MINOR_VERSION	0
@@ -40,6 +43,35 @@
 #define ICL_CHANGE_VOTER		"ICL_CHANGE_VOTER"
 #define PL_INDIRECT_VOTER		"PL_INDIRECT_VOTER"
 #define USBIN_I_VOTER			"USBIN_I_VOTER"
+
+#ifdef CONFIG_VENDOR_SMARTISAN
+extern void synaptics_rmi4_charger_switch(int mode);
+
+#define STEP_CHARGING_MAX_STEPS	5
+struct smb_dt_props {
+	int	usb_icl_ua;
+	int	dc_icl_ua;
+	int	boost_threshold_ua;
+	int	wipower_max_uw;
+	int	min_freq_khz;
+	int	max_freq_khz;
+	u32	step_soc_threshold[STEP_CHARGING_MAX_STEPS - 1];
+	s32	step_cc_delta[STEP_CHARGING_MAX_STEPS];
+	struct	device_node *revid_dev_node;
+	int	float_option;
+	int	chg_inhibit_thr_mv;
+	bool	no_battery;
+	bool	hvdcp_disable;
+	bool	auto_recharge_soc;
+};
+
+struct smb2 {
+	struct smb_charger	chg;
+	struct dentry		*dfs_root;
+	struct smb_dt_props	dt;
+	bool			bad_part;
+};
+#endif
 
 struct pl_data {
 	int			pl_mode;
@@ -72,11 +104,17 @@ struct pl_data {
 
 struct pl_data *the_chip;
 
+#ifndef CONFIG_VENDOR_SMARTISAN
 enum print_reason {
 	PR_PARALLEL	= BIT(0),
 };
+#endif
 
+#ifdef CONFIG_VENDOR_SMARTISAN
+static int debug_mask = 0x8;
+#else
 static int debug_mask;
+#endif
 module_param_named(debug_mask, debug_mask, int, S_IRUSR | S_IWUSR);
 
 #define pl_dbg(chip, reason, fmt, ...)				\
@@ -558,7 +596,15 @@ static int usb_icl_vote_callback(struct votable *votable, void *data,
 			POWER_SUPPLY_PROP_CURRENT_MAX,
 			&pval);
 
+#ifdef CONFIG_VENDOR_SMARTISAN
+	if (icl_ua > 1400000) {
+#endif
 	vote(chip->pl_disable_votable, ICL_CHANGE_VOTER, false, 0);
+#ifdef CONFIG_VENDOR_SMARTISAN
+	} else {
+		vote(chip->pl_disable_votable, ICL_CHANGE_VOTER, true, 0);
+	}
+#endif
 
 	return 0;
 }
@@ -893,6 +939,10 @@ static void status_change_work(struct work_struct *work)
 {
 	struct pl_data *chip = container_of(work,
 			struct pl_data, status_change_work.work);
+#ifdef CONFIG_VENDOR_SMARTISAN
+	struct smb2 *chip_smb;
+	struct smb_charger *chg;
+#endif
 
 	if (!chip->main_psy && is_main_available(chip)) {
 		/*
@@ -910,6 +960,18 @@ static void status_change_work(struct work_struct *work)
 
 	if (!is_batt_available(chip))
 		return;
+
+#ifdef CONFIG_VENDOR_SMARTISAN
+	chip_smb = power_supply_get_drvdata(chip->main_psy);
+	chg = &chip_smb->chg;
+
+	if (chg->real_charger_type == POWER_SUPPLY_TYPE_UNKNOWN)
+		synaptics_rmi4_charger_switch(0);
+	else if (chg->real_charger_type != POWER_SUPPLY_TYPE_USB)
+		synaptics_rmi4_charger_switch(1);
+	else
+		synaptics_rmi4_charger_switch(0);
+#endif
 
 	is_parallel_available(chip);
 
