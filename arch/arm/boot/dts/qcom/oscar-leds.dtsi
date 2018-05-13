@@ -1,0 +1,48 @@
+/* Copyright (c) 2017, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+&pm660l_wled {
+	qcom,fs-curr-ua = <20000>;
+	qcom,led-strings-list = [00 01];
+	qcom,en-ext-pfet-sc-pro;
+	qcom,en-cabc;
+};
+
+&pm660l_flash0 {
+	qcom,max-current = <1000>;
+	qcom,current-ma = <625>;
+};
+
+&pm660l_flash1 {
+	qcom,max-current = <1000>;
+	qcom,current-ma = <625>;
+};
+
+&pm660l_flash2 {
+	qcom,max-current = <1000>;
+	qcom,current-ma = <625>;
+};
+
+&pm660l_torch0 {
+	qcom,max-current = <150>;
+	qcom,current-ma = <50>;
+};
+
+&pm660l_torch1 {
+	qcom,max-current = <150>;
+	qcom,current-ma = <50>;
+};
+
+&pm660l_torch2 {
+	qcom,max-current = <150>;
+	qcom,current-ma = <50>;
+};
