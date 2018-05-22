@@ -993,6 +993,8 @@ static void thermal_zone_device_check(struct work_struct *work)
 #define to_thermal_zone(_dev) \
 	container_of(_dev, struct thermal_zone_device, device)
 
+static ssize_t offset_temp = 0;
+
 static ssize_t
 type_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -1013,6 +1015,29 @@ temp_show(struct device *dev, struct device_attribute *attr, char *buf)
 		return ret;
 
 	return sprintf(buf, "%d\n", temperature);
+}
+
+static ssize_t
+offset_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+        long temperature;
+        temperature = offset_temp;
+
+       return sprintf(buf, "%ld\n", temperature);
+}
+
+static ssize_t
+offset_store(struct device *dev, struct device_attribute *attr,
+          const char *buf, size_t count)
+{
+        long temperature;
+
+       if (kstrtol(buf, 10, &temperature))
+            return -EINVAL;
+
+        offset_temp = temperature;
+
+       return count;
 }
 
 static ssize_t
@@ -1441,7 +1466,7 @@ create_s32_tzp_attr(k_i);
 create_s32_tzp_attr(k_d);
 create_s32_tzp_attr(integral_cutoff);
 create_s32_tzp_attr(slope);
-create_s32_tzp_attr(offset);
+//create_s32_tzp_attr(offset);
 #undef create_s32_tzp_attr
 
 static struct device_attribute *dev_tzp_attrs[] = {
@@ -1452,7 +1477,7 @@ static struct device_attribute *dev_tzp_attrs[] = {
 	&dev_attr_k_d,
 	&dev_attr_integral_cutoff,
 	&dev_attr_slope,
-	&dev_attr_offset,
+//	&dev_attr_offset,
 };
 
 static int create_tzp_attrs(struct device *dev)
@@ -1553,6 +1578,7 @@ int power_actor_set_power(struct thermal_cooling_device *cdev,
 
 static DEVICE_ATTR(type, 0444, type_show, NULL);
 static DEVICE_ATTR(temp, 0444, temp_show, NULL);
+static DEVICE_ATTR(offset, 0200, offset_show, offset_store);
 static DEVICE_ATTR(mode, 0644, mode_show, mode_store);
 static DEVICE_ATTR(passive, S_IRUGO | S_IWUSR, passive_show, passive_store);
 static DEVICE_ATTR(policy, S_IRUGO | S_IWUSR, policy_show, policy_store);
@@ -2318,6 +2344,10 @@ struct thermal_zone_device *thermal_zone_device_register(const char *type,
 	if (result)
 		goto unregister;
 
+        result = device_create_file(&tz->device, &dev_attr_offset);
+        if (result)
+               goto unregister;
+
 	if (ops->get_mode) {
 		result = device_create_file(&tz->device, &dev_attr_mode);
 		if (result)
@@ -2465,6 +2495,7 @@ void thermal_zone_device_unregister(struct thermal_zone_device *tz)
 	if (tz->type[0])
 		device_remove_file(&tz->device, &dev_attr_type);
 	device_remove_file(&tz->device, &dev_attr_temp);
+	device_remove_file(&tz->device, &dev_attr_offset);
 	if (tz->ops->get_mode)
 		device_remove_file(&tz->device, &dev_attr_mode);
 	device_remove_file(&tz->device, &dev_attr_policy);
