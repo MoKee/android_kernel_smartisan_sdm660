@@ -39,6 +39,7 @@
 #include <linux/ratelimit.h>
 #include <linux/pm_runtime.h>
 #include <linux/blk-cgroup.h>
+#include <linux/fs.h>
 
 #ifdef CONFIG_BLOCK_PERF_FRAMEWORK
 #include <linux/ktime.h>
@@ -2571,6 +2572,45 @@ static inline void blk_init_perf(void)
 }
 #endif /* #ifdef CONFIG_BLOCK_PERF_FRAMEWORK */
 
+char* get_bio_related_filename (struct bio *bio, char* filename_buf,int len, uint32_t *pinode)
+{
+    struct inode *pIno;
+    char* filename;
+
+    if(bio->bi_io_vec == NULL){
+        strcpy(filename_buf, "bi_io_vec");
+        goto _exit;
+    }
+    if(bio->bi_io_vec->bv_page == NULL){
+        strcpy(filename_buf, "bi_io_vec->bv_page");
+        goto _exit;
+    }
+
+    if(PageMappingFlags(bio->bi_io_vec->bv_page)){
+        //printk("PageMappingFlags_bi_io_vec->bv_page");
+        pIno = bio->bi_dio_inode;
+    }
+    else
+    {
+        if(bio->bi_io_vec->bv_page->mapping == NULL){
+            strcpy(filename_buf, "bi_io_vec->bv_page->mapping");
+            goto _exit;
+        }
+        if(bio->bi_io_vec->bv_page->mapping->host == NULL){
+            strcpy(filename_buf, "bi_io_vec->bv_page->mapping->host");
+            goto _exit;
+        }
+        pIno = bio->bi_io_vec->bv_page->mapping->host;
+    }
+    //printk("inode: %lu\n", pinode->i_ino);
+    *pinode = pIno->i_ino;
+    filename=getfullpath(pIno, filename_buf, len);
+    //strcpy(filename, "FILENAME");
+    return filename;
+
+_exit:
+    return filename_buf;
+}
 /**
  * submit_bio - submit a bio to the block device layer for I/O
  * @rw: whether to %READ or %WRITE, or maybe to %READA (read ahead)
@@ -2615,6 +2655,23 @@ blk_qc_t submit_bio(int rw, struct bio *bio)
 				bdevname(bio->bi_bdev, b),
 				count);
 		}
+
+		if (unlikely(fs_dump&FS_LOG_BLOCK)) {
+			char b[BDEVNAME_SIZE];
+			struct task_struct *tsk;
+			char filename_buf[1024], *filename;
+			uint32_t inode=0;
+
+			filename = get_bio_related_filename(bio, filename_buf,sizeof(filename_buf),&inode);
+			tsk = get_dirty_task(bio);
+			printk(KERN_DEBUG "%s(%d): %s block %Lu on %s (%u sectors) (inode:%d, name:%s)\n",
+				tsk->comm, task_pid_nr(tsk),
+				(rw & WRITE) ? "WRITE" : "READ",
+				(unsigned long long)bio->bi_iter.bi_sector,
+				bdevname(bio->bi_bdev, b),
+				count, inode, filename);
+		}
+
 	}
 
 	set_submit_info(bio, count);

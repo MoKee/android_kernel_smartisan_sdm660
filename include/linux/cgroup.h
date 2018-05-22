@@ -49,6 +49,16 @@ struct css_task_iter {
 
 extern struct cgroup_root cgrp_dfl_root;
 extern struct css_set init_css_set;
+extern int proc_migrate_from_bg_count;
+extern bool cgroup_task_in_cpu_bg(struct task_struct *p);
+extern int __cgroup_get_bg_released_pids(int * pids, int length);
+static inline int cgroup_get_bg_released_pids(int * pids, int length)
+{
+    if (0 == proc_migrate_from_bg_count) {
+        return 0;
+    }
+    return __cgroup_get_bg_released_pids(pids, length);
+}
 
 #define SUBSYS(_x) extern struct cgroup_subsys _x ## _cgrp_subsys;
 #include <linux/cgroup_subsys.h>

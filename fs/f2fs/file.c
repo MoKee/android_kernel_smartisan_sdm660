@@ -1693,6 +1693,29 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 				f2fs_get_encryption_info(inode))
 		return -EACCES;
 
+    // for fs_dump
+    if (unlikely(fs_dump&FS_LOG_F2FS_WRITE)) {
+        char fullname_buf[1024];
+        char *fullname=NULL;
+        loff_t pos = iocb->ki_pos;
+        size_t length = iov_iter_count(from);
+        int o_direct = iocb->ki_flags & IOCB_DIRECT;
+
+        fullname=getfullpath(inode,fullname_buf,sizeof(fullname_buf));
+        if(fullname)
+        {
+            // not dump logd/* files
+            if(!strstr(fullname, "logd"))
+            {
+                printk(KERN_DEBUG "%s(%d): f2fs inode: %lu, name: %s, lenght: %lu, pos: %lld, direct: %d\n", current->comm, current->pid, inode->i_ino, fullname, length, pos, !!o_direct);                
+            }
+        }
+        else
+        {
+            printk(KERN_DEBUG "%s(%d): f2fs inode: %lu, name: %s, lenght: %lu, pos: %lld, direct: %d\n", current->comm, current->pid, inode->i_ino, "NULL", length, pos, !!o_direct);                
+        }
+    }
+
 	return generic_file_write_iter(iocb, from);
 }
 

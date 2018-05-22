@@ -1171,6 +1171,7 @@ struct cgroup_subsys io_cgrp_subsys = {
 	.css_alloc = blkcg_css_alloc,
 	.css_offline = blkcg_css_offline,
 	.css_free = blkcg_css_free,
+	.allow_attach = subsys_cgroup_allow_attach,
 	.can_attach = blkcg_can_attach,
 	.bind = blkcg_bind,
 	.dfl_cftypes = blkcg_files,
