@@ -35,6 +35,7 @@
 #include <linux/init.h>
 #include <linux/moduleparam.h>
 #include <linux/kernel.h>
+#include <linux/kernel_stat.h>
 #include <linux/mm.h>
 #include <linux/oom.h>
 #include <linux/sched.h>
@@ -106,6 +107,91 @@ static int enable_adaptive_lmk;
 module_param_named(enable_adaptive_lmk, enable_adaptive_lmk, int,
 		   S_IRUGO | S_IWUSR);
 
+static int busy_adj;
+
+static inline int get_cpu_usage(unsigned long delta_jiffies)
+{
+    static unsigned long last_cpu_self = 0;
+
+    unsigned long cpu_self, delta_self;
+    int ret = 0;
+
+    //kswapd is single thread processing, and will be in considerable future
+    //so we just count one cpu's time should be right
+    //that can use delta_jiffies
+    //cpu_total += kcpustat_cpu(0).cpustat[CPUTIME_USER];
+    //cpu_total += kcpustat_cpu(0).cpustat[CPUTIME_NICE];
+    //cpu_total += kcpustat_cpu(0).cpustat[CPUTIME_SYSTEM];
+    //cpu_total += kcpustat_cpu(0).cpustat[CPUTIME_IRQ];
+    //cpu_total += kcpustat_cpu(0).cpustat[CPUTIME_SOFTIRQ];
+    //cpu_total += kcpustat_cpu(0).cpustat[CPUTIME_IOWAIT];
+    //cpu_total += kcpustat_cpu(0).cpustat[CPUTIME_IDLE];
+    //guest      = kcpustat_cpu(0).cpustat[CPUTIME_STEAL];
+    //guest     += kcpustat_cpu(0).cpustat[CPUTIME_GUEST];
+    //guest     += kcpustat_cpu(0).cpustat[CPUTIME_GUEST_NICE];
+    //cpu_total += guest;
+
+    cpu_self = current->utime + current->stime;
+    delta_self = cpu_self - last_cpu_self;
+    ret = delta_self * 100 / delta_jiffies;
+    lowmem_print(2, "check_cpu delta_total:%lu, delta_jiffies:%lu, cpu:%d\n", delta_jiffies, delta_self, ret);
+
+    last_cpu_self  = cpu_self;
+    return ret;
+}
+
+static inline void check_run_count(void )
+{//run only in kswapd, so needs no concurrent
+#define CHECK_COUNT (HZ/2) 
+#define NR_MAX_ADJUST 2
+
+    static int check_count = CHECK_COUNT, last_count = 0;
+    static unsigned long last_jiffies = 0;
+    static bool cpu_per_pending = false;
+
+    unsigned long delta_jiffies;
+    if ( unlikely(!current_is_kswapd()) ) {
+        return;
+    }
+    delta_jiffies = jiffies - last_jiffies;
+    if (unlikely(delta_jiffies > check_count)) {
+        const bool last_pending = cpu_per_pending;
+        int cpu_per = get_cpu_usage(delta_jiffies);
+        cpu_per_pending = true;
+        if (35 < cpu_per) {
+            busy_adj = NR_MAX_ADJUST;
+            check_count = CHECK_COUNT / 3;
+        }else if(20 < cpu_per){
+            busy_adj = NR_MAX_ADJUST - 1;
+            check_count = CHECK_COUNT / 2;
+        }else if(8 < cpu_per){
+            if(last_pending){
+                busy_adj = NR_MAX_ADJUST - 1;
+                check_count = CHECK_COUNT;
+            }else{
+                busy_adj = NR_MAX_ADJUST - 2;
+                if (last_count == CHECK_COUNT) {
+                    check_count = 2 * CHECK_COUNT;
+                }else{
+                    check_count = CHECK_COUNT;
+                }
+            }
+        }else{
+            cpu_per_pending = false;
+            if (last_count == 2 * CHECK_COUNT) {
+                check_count = 3 * CHECK_COUNT;
+            }else{
+                check_count = 2 * CHECK_COUNT;
+            }
+        }
+        if (busy_adj) {
+            lowmem_print(1, "self cpu load:%d, kill more:%d, check duration:%d\n"
+                    , cpu_per, busy_adj, (int)(delta_jiffies));
+        }
+        last_jiffies = jiffies;
+        last_count   = check_count;
+    }
+}
 /*
  * This parameter controls the behaviour of LMK when vmpressure is in
  * the range of 90-94. Adaptive lmk triggers based on number of file
@@ -123,22 +209,20 @@ enum {
 	VMPRESSURE_ADJUST_NORMAL,
 };
 
-int adjust_minadj(short *min_score_adj)
+static inline int adjust_minadj(void )
 {
 	int ret = VMPRESSURE_NO_ADJUST;
+    const int shift = atomic_read(&shift_adj);
 
-	if (!enable_adaptive_lmk)
-		return 0;
+    check_run_count();
 
-	if (atomic_read(&shift_adj) &&
-	    (*min_score_adj > adj_max_shift)) {
-		if (*min_score_adj == OOM_SCORE_ADJ_MAX + 1)
-			ret = VMPRESSURE_ADJUST_ENCROACH;
-		else
-			ret = VMPRESSURE_ADJUST_NORMAL;
-		*min_score_adj = adj_max_shift;
+	if (shift || busy_adj) {
+        ret = busy_adj > shift ? busy_adj : shift;
+        --busy_adj;
+        if (0 > busy_adj) 
+            busy_adj = 0;
+        atomic_set(&shift_adj, 0);
 	}
-	atomic_set(&shift_adj, 0);
 
 	return ret;
 }
@@ -410,7 +494,7 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 	struct task_struct *selected = NULL;
 	unsigned long rem = 0;
 	int tasksize;
-	int i;
+	int i, lowmem_adj_index;
 	int ret = 0;
 	short min_score_adj = OOM_SCORE_ADJ_MAX + 1;
 	int minfree = 0;
@@ -443,15 +527,10 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 		minfree = lowmem_minfree[i];
 		if (other_free < minfree && other_file < minfree) {
 			min_score_adj = lowmem_adj[i];
+			lowmem_adj_index = i;
 			break;
 		}
 	}
-
-	ret = adjust_minadj(&min_score_adj);
-
-	lowmem_print(3, "lowmem_scan %lu, %x, ofree %d %d, ma %hd\n",
-			sc->nr_to_scan, sc->gfp_mask, other_free,
-			other_file, min_score_adj);
 
 	if (min_score_adj == OOM_SCORE_ADJ_MAX + 1) {
 		trace_almk_shrink(0, ret, other_free, other_file, 0);
@@ -459,6 +538,15 @@ static unsigned long lowmem_scan(struct shrinker *s, struct shrink_control *sc)
 			     sc->nr_to_scan, sc->gfp_mask);
 		mutex_unlock(&scan_mutex);
 		return 0;
+	}
+
+	ret = adjust_minadj();
+	if ((0 < ret) && (min_score_adj > lowmem_adj[3])) {
+		/* in pressure, killing should be enough hard */
+		min_score_adj = lowmem_adj[3];
+		lowmem_print(1, "adj min in shrink, %x, free %d %d, ma %hd, index:%d\n",
+			     sc->gfp_mask, other_free, other_file, min_score_adj,
+			     lowmem_adj_index);
 	}
 
 	selected_oom_score_adj = min_score_adj;

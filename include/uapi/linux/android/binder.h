@@ -191,6 +191,8 @@ struct binder_version {
 #define BINDER_SET_CONTEXT_MGR		_IOW('b', 7, __s32)
 #define BINDER_THREAD_EXIT		_IOW('b', 8, __s32)
 #define BINDER_VERSION			_IOWR('b', 9, struct binder_version)
+#define BINDER_WRITE_READ_BG	_IOWR('b', 20, struct binder_write_read)
+#define BINDER_GET_SERVER_THREAD_TID _IOR('b', 30, __s32)
 
 /*
  * NOTE: Two special error codes you should check for when calling

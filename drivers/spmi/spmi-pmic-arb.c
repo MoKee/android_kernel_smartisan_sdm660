@@ -217,6 +217,32 @@ struct pmic_arb_ver_ops {
 	u32 (*channel_map_offset)(u16 n);
 };
 
+
+/*
+ * int  write_pmic_data(u8 sid, u16 addr, u8 *buf, int len )
+ * {
+ *         u8  value = 0;
+ *         struct spmi_device sdev;
+ *         sdev.ctl = the_pa;
+ *         sdev.usid = sid;
+ *
+ *         spmi_ext_register_readl( &sdev, sid, addr, buf, len);
+ *
+ *         value=buf[0] & 0x7F;
+ *         return  spmi_ext_register_writel(&sdev, sid, addr, &value, len);
+ * }
+ */
+
+int  read_pmic_data(u8 sid, u16 addr, u8 *buf, int len)
+{
+	struct spmi_device sdev;
+	sdev.ctrl = the_pa->spmic;
+	sdev.usid = sid;
+
+	return spmi_ext_register_readl(&sdev, addr, buf, len);
+}
+
+
 static inline void pmic_arb_base_write(struct spmi_pmic_arb *pa,
 				       u32 offset, u32 val)
 {

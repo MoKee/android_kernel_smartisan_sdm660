@@ -2359,6 +2359,9 @@ static int qpnp_pon_probe(struct platform_device *pdev)
 	pon->store_hard_reset_reason = of_property_read_bool(pdev->dev.of_node,
 					"qcom,store-hard-reset-reason");
 
+	/* Determine volum_up initial status */
+	qpnp_pon_input_dispatch(pon, PON_RESIN);
+
 	qpnp_pon_debugfs_init(pdev);
 	return 0;
 }
