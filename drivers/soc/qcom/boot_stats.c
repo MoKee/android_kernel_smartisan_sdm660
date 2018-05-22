@@ -22,6 +22,9 @@
 #include <linux/sched.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#ifdef CONFIG_VENDOR_SMARTISAN
+#include <soc/qcom/boot_stats.h>
+#endif
 
 struct boot_stats {
 	uint32_t bootloader_start;
@@ -33,6 +36,13 @@ struct boot_stats {
 static void __iomem *mpm_counter_base;
 static uint32_t mpm_counter_freq;
 static struct boot_stats __iomem *boot_stats;
+
+#ifdef CONFIG_VENDOR_SMARTISAN
+struct boot_shared_imem_cookie_type __iomem *boot_imem;
+
+extern char * log_first_idx_get(void);
+extern char * log_next_idx_get(void);
+#endif
 
 static int mpm_parse_dt(void)
 {
@@ -88,13 +98,86 @@ static void print_boot_stats(void)
 		mpm_counter_freq);
 }
 
+#ifdef CONFIG_VENDOR_SMARTISAN
+ssize_t show_offline_dump(struct kobject *kobj, struct attribute *attr,char *buf)
+{
+	uint32_t show_val;
+
+	show_val = boot_imem->offline_dump_flag;
+
+	return snprintf(buf, sizeof(show_val), "%u\n", show_val);
+}
+
+size_t store_offline_dump(struct kobject *kobj, struct attribute *attr,const char *buf, size_t count)
+{
+	uint32_t enabled;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &enabled);
+	if (ret < 0)
+		return ret;
+
+	if (!((enabled == 0) || (enabled == 1)))
+		return -EINVAL;
+
+	if (enabled == 1)
+		boot_imem->offline_dump_flag = 1;
+	else
+		boot_imem->offline_dump_flag = 0;
+
+	return count;
+}
+
+uint64_t get_boot_reason(void)
+{
+	if (boot_imem == NULL)
+		boot_stats_init();
+	return (uint64_t)boot_imem->pon_reason;
+}
+
+uint32_t get_secure_boot_value(void)
+{
+		if (boot_imem == NULL)
+			boot_stats_init();
+
+		return (uint32_t)boot_imem->is_enable_secure_boot;
+}
+
+uint32_t get_ufs_flag(void)
+{
+	return boot_imem->if_has_ufs;
+}
+EXPORT_SYMBOL(get_ufs_flag);
+#endif
+
 int boot_stats_init(void)
 {
 	int ret;
+#ifdef CONFIG_VENDOR_SMARTISAN
+	struct device_node *np;
+#endif
 
 	ret = mpm_parse_dt();
 	if (ret < 0)
 		return -ENODEV;
+
+#ifdef CONFIG_VENDOR_SMARTISAN
+	np = of_find_compatible_node(NULL, NULL, "qcom,msm-imem");
+	if (!np) {
+		pr_err("can't find qcom,msm-imem node\n");
+		return -ENODEV;
+	}
+
+	boot_imem = of_iomap(np, 0);
+
+	boot_imem->kernel_log_buf_addr = virt_to_phys(log_buf_addr_get());
+	boot_imem->log_first_idx_addr = virt_to_phys(log_first_idx_get());
+	boot_imem->log_next_idx_addr = virt_to_phys(log_next_idx_get());
+
+	if (boot_imem->offline_dump_happen == 1) {
+		boot_imem->offline_dump_happen = 0;
+	}
+#endif
 
 	print_boot_stats();
 
