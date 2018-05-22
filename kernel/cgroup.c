@@ -179,6 +179,12 @@ EXPORT_SYMBOL_GPL(cgrp_dfl_root);
  */
 static bool cgrp_dfl_root_visible;
 
+static struct cgroup * cgroup_cpu_bg;
+static struct cgroup_root * cgroup_cpu_root;
+#define PROC_MIGRATE_COUNT 20
+static pid_t proc_migrate_from_bg[PROC_MIGRATE_COUNT];
+int proc_migrate_from_bg_count = 0;
+
 /* some controllers are not supported in the default hierarchy */
 static unsigned long cgrp_dfl_root_inhibit_ss_mask;
 
@@ -2384,6 +2390,7 @@ static int cgroup_taskset_migrate(struct cgroup_taskset *tset,
 	struct task_struct *task, *tmp_task;
 	struct css_set *cset, *tmp_cset;
 	int i, ret;
+    bool find_leader = false;
 
 	/* methods shouldn't be called if no task is actually migrating */
 	if (list_empty(&tset->src_csets))
@@ -2411,6 +2418,19 @@ static int cgroup_taskset_migrate(struct cgroup_taskset *tset,
 		list_for_each_entry_safe(task, tmp_task, &cset->mg_tasks, cg_list) {
 			struct css_set *from_cset = task_css_set(task);
 			struct css_set *to_cset = cset->mg_dst_cset;
+            if (!find_leader && task == task->group_leader) {
+                //tc->cgrp can't be NULL so it's OK cgroup_cpu_bg inited or not 
+                if(cset->mg_src_cgrp == cgroup_cpu_bg) {
+                    //pid is safer then task pointer, because it may gone later
+                    if(proc_migrate_from_bg_count >= PROC_MIGRATE_COUNT){
+                        const int c = PROC_MIGRATE_COUNT/2;
+                        memcpy(proc_migrate_from_bg, proc_migrate_from_bg+c, c*sizeof(pid_t));
+                        proc_migrate_from_bg_count = c;
+                    }
+                    proc_migrate_from_bg[proc_migrate_from_bg_count++] = task->pid;
+                }
+                find_leader = true;
+            }
 
 			get_css_set(to_cset);
 			css_set_move_task(task, from_cset, to_cset, true);
@@ -4979,7 +4999,6 @@ err_free_css:
 	call_rcu(&css->rcu_head, css_free_rcu_fn);
 	return err;
 }
-
 static int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name,
 			umode_t mode)
 {
@@ -6073,3 +6092,100 @@ struct cgroup_subsys debug_cgrp_subsys = {
 	.legacy_cftypes = debug_files,
 };
 #endif /* CONFIG_CGROUP_DEBUG */
+//SmartisanOS ext
+static void get_bg_cgroup_info(void )
+{
+	char *buf;
+	int retval;
+	struct cgroup_root *root;
+    char *path = NULL;
+    bool isCpuCtl = false;
+
+	retval = -ENOMEM;
+	buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!buf)
+		goto out;
+
+	for_each_root(root) {
+		struct cgroup *cgrp, *child;
+        int ssid;
+        struct cgroup_subsys *ss;
+		if (root == &cgrp_dfl_root)//note bg is not the default root
+			continue;
+        
+        isCpuCtl = false;
+        for_each_subsys(ss, ssid) {
+            if (root->subsys_mask & (1 << ssid)) {
+                if( 0 == strncmp("cpu", ss->name, 4)) {
+                    isCpuCtl = true;
+                    cgroup_cpu_root = root;
+                }
+                break;
+            }
+        }
+        if (!isCpuCtl) {
+            continue;
+        }
+		cgrp = &root->cgrp;
+		cgroup_for_each_live_child(child, cgrp) {
+            path = cgroup_path(child, buf, PATH_MAX);
+            if (path > 0) {
+                if( 0 == strncmp(path, "/bg_3rd_app", 11)) {
+                    cgroup_cpu_bg = child;
+                    pr_info("find get_bg_cgroup_info, bg:%p root:%p\n",
+                        cgroup_cpu_bg, &root->cgrp);
+                }
+            }
+        }
+	}
+
+	kfree(buf);
+    return;
+out:
+    pr_info("get_bg_cgroup_info failed\n");
+}
+
+bool cgroup_task_in_cpu_bg(struct task_struct *p)
+{
+    bool ret = false;
+
+    if (!p) {
+        return ret;
+    }
+	mutex_lock(&cgroup_mutex);
+    if(unlikely(NULL == cgroup_cpu_bg)) {
+        get_bg_cgroup_info();
+    }
+    if(NULL != cgroup_cpu_bg) {
+        struct cgroup *from_cgrp;
+
+        spin_lock_irq(&css_set_lock);
+        from_cgrp = task_cgroup_from_root(p, cgroup_cpu_root);
+        spin_unlock_irq(&css_set_lock);
+
+        ret = from_cgrp == cgroup_cpu_bg;
+    }
+	mutex_unlock(&cgroup_mutex);
+    return ret;
+}
+EXPORT_SYMBOL(cgroup_task_in_cpu_bg);
+//return: >0: nr of pids, ==0: no pids, <0: error
+int __cgroup_get_bg_released_pids(int * pids, int length)
+{
+    int ret, count;
+    if (proc_migrate_from_bg_count <= 0) {
+        return 0;
+    }
+    BUG_ON(length < 1);
+
+	mutex_lock(&cgroup_mutex);
+
+    ret = count = min(length, proc_migrate_from_bg_count);
+    //bg migration hadling is fast and intime
+    //and move a little more is OK, so needs no check
+    memcpy(pids, proc_migrate_from_bg, count * sizeof(pid_t));
+    proc_migrate_from_bg_count = 0;
+	mutex_unlock(&cgroup_mutex);
+    return ret;
+}
+EXPORT_SYMBOL(__cgroup_get_bg_released_pids);
