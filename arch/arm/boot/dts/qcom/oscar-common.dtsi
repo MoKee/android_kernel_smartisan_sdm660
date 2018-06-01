@@ -84,6 +84,10 @@
 					"MAX";
 		qcom,instance-type = "ufs";
 	};
+
+	qcom,msm_fastrpc {
+		/delete-property/ qcom,fastrpc-vmid-heap-shared;
+	};
 };
 
 &clock_cpu {
