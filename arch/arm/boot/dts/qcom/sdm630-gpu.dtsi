@@ -132,9 +132,6 @@
 
 		qcom,gpu-speed-bin = <0x41a0 0x1fe00000 21>;
 
-		/* Enable midframe sampling */
-		qcom,enable-midframe-timer;
-
 		/* GPU Mempools */
 		qcom,gpu-mempools {
 			#address-cells= <1>;
@@ -152,7 +149,6 @@
 			qcom,gpu-mempool@1 {
 				reg = <1>;
 				qcom,mempool-page-size  = <65536>;
-				qcom,mempool-allocate;
 			};
 		};
 
