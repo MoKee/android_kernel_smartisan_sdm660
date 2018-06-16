@@ -481,12 +481,8 @@ static int msm_isp_cfg_pix(struct vfe_device *vfe_dev,
 
 	if (input_cfg->d.pix_cfg.input_mux == CAMIF ||
 		input_cfg->d.pix_cfg.input_mux == TESTGEN) {
-		if (input_cfg->d.pix_cfg.input_mux == CAMIF)
-			vfe_dev->axi_data.src_info[VFE_PIX_0].width =
-				input_cfg->d.pix_cfg.camif_cfg.pixels_per_line;
-		if (input_cfg->d.pix_cfg.input_mux == TESTGEN)
-			vfe_dev->axi_data.src_info[VFE_PIX_0].width =
-			input_cfg->d.pix_cfg.testgen_cfg.pixels_per_line;
+		vfe_dev->axi_data.src_info[VFE_PIX_0].width =
+			input_cfg->d.pix_cfg.camif_cfg.pixels_per_line;
 		if (input_cfg->d.pix_cfg.camif_cfg.subsample_cfg.
 			sof_counter_step > 0) {
 			vfe_dev->axi_data.src_info[VFE_PIX_0].
@@ -512,9 +508,6 @@ static int msm_isp_cfg_rdi(struct vfe_device *vfe_dev,
 			   input_cfg->input_src - VFE_RAW_0);
 		return -EINVAL;
 	}
-
-	vfe_dev->axi_data.
-		src_info[input_cfg->input_src].sof_counter_step = 1;
 
 	vfe_dev->axi_data.src_info[input_cfg->input_src].pixel_clock =
 		input_cfg->input_pix_clk;
@@ -1764,7 +1757,6 @@ int msm_isp_get_bit_per_pixel(uint32_t output_format)
 	case V4L2_PIX_FMT_QGRBG12:
 	case V4L2_PIX_FMT_QRGGB12:
 	case V4L2_PIX_FMT_Y12:
-	case MSM_V4L2_PIX_FMT_META12:
 		return 12;
 	case V4L2_PIX_FMT_SBGGR14:
 	case V4L2_PIX_FMT_SGBRG14:
@@ -2361,7 +2353,6 @@ int msm_isp_close_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	long rc = 0;
 	int wm;
-	int i;
 	struct vfe_device *vfe_dev = v4l2_get_subdevdata(sd);
 	ISP_DBG("%s E open_cnt %u\n", __func__, vfe_dev->vfe_open_cnt);
 	mutex_lock(&vfe_dev->realtime_mutex);
@@ -2411,8 +2402,6 @@ int msm_isp_close_node(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 		msm_isp_end_avtimer();
 		vfe_dev->vt_enable = 0;
 	}
-	for (i = 0; i < VFE_SRC_MAX; i++)
-		vfe_dev->axi_data.src_info[i].lpm = 0;
 	MSM_ISP_DUAL_VFE_MUTEX_UNLOCK(vfe_dev);
 	vfe_dev->is_split = 0;
 

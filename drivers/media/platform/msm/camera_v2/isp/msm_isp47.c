@@ -274,12 +274,10 @@ int msm_isp47_ahb_clk_cfg(struct vfe_device *vfe_dev,
 	enum cam_ahb_clk_vote src_clk_vote;
 	struct msm_isp_clk_rates clk_rates;
 
-	if (ahb_cfg) {
+	if (ahb_cfg)
 		vote = msm_isp47_get_cam_clk_vote(ahb_cfg->vote);
-		vfe_dev->user_requested_ahb_vote = vote;
-	} else {
-		vote = vfe_dev->user_requested_ahb_vote;
-	}
+	else
+		vote = CAM_AHB_SVS_VOTE;
 
 	vfe_dev->hw_info->vfe_ops.platform_ops.get_clk_rates(vfe_dev,
 							&clk_rates);
@@ -329,7 +327,6 @@ int msm_vfe47_init_hardware(struct vfe_device *vfe_dev)
 	if (rc)
 		goto clk_enable_failed;
 
-	vfe_dev->user_requested_ahb_vote = CAM_AHB_SVS_VOTE;
 	rc = cam_config_ahb_clk(NULL, 0, id, CAM_AHB_SVS_VOTE);
 	if (rc < 0) {
 		pr_err("%s: failed to vote for AHB\n", __func__);
@@ -708,7 +705,7 @@ void msm_vfe47_process_epoch_irq(struct vfe_device *vfe_dev,
 void msm_isp47_preprocess_camif_irq(struct vfe_device *vfe_dev,
 	uint32_t irq_status0)
 {
-	if (irq_status0 & BIT(3))
+	if (irq_status0 & BIT(1))
 		vfe_dev->axi_data.src_info[VFE_PIX_0].accept_frame = false;
 	if (irq_status0 & BIT(0))
 		vfe_dev->axi_data.src_info[VFE_PIX_0].accept_frame = true;
@@ -797,7 +794,7 @@ long msm_vfe47_reset_hardware(struct vfe_device *vfe_dev,
 		msm_camera_io_w(0xFFFFFEFF, vfe_dev->vfe_base + 0x68);
 		msm_camera_io_w(0x1, vfe_dev->vfe_base + 0x58);
 		vfe_dev->hw_info->vfe_ops.axi_ops.
-			reload_wm(vfe_dev, vfe_dev->vfe_base, 0x0011FFFF);
+			reload_wm(vfe_dev, vfe_dev->vfe_base, 0x0031FFFF);
 	}
 
 	if (blocking_call) {
@@ -1383,9 +1380,7 @@ void msm_vfe47_cfg_camif(struct vfe_device *vfe_dev,
 	struct msm_vfe_pix_cfg *pix_cfg)
 {
 	uint16_t first_pixel, last_pixel, first_line, last_line;
-	uint16_t epoch_line1;
 	struct msm_vfe_camif_cfg *camif_cfg = &pix_cfg->camif_cfg;
-	struct msm_vfe_testgen_cfg *testgen_cfg = &pix_cfg->testgen_cfg;
 	uint32_t val, subsample_period, subsample_pattern;
 	uint32_t irq_sub_period = 32;
 	uint32_t frame_sub_period = 32;
@@ -1406,26 +1401,11 @@ void msm_vfe47_cfg_camif(struct vfe_device *vfe_dev,
 	last_pixel = camif_cfg->last_pixel;
 	first_line = camif_cfg->first_line;
 	last_line = camif_cfg->last_line;
-	epoch_line1 = camif_cfg->epoch_line1;
-
-	if ((epoch_line1 <= 0) || (epoch_line1 > last_line))
-		epoch_line1 = last_line - 50;
-
-	if ((last_line - epoch_line1) > 100)
-		epoch_line1 = last_line - 100;
-
 	subsample_period = camif_cfg->subsample_cfg.irq_subsample_period;
 	subsample_pattern = camif_cfg->subsample_cfg.irq_subsample_pattern;
 
-	if (pix_cfg->input_mux == TESTGEN)
-		msm_camera_io_w((testgen_cfg->lines_per_frame - 1) << 16 |
-			(testgen_cfg->pixels_per_line - 1),
-			vfe_dev->vfe_base + 0x484);
-	else
-		msm_camera_io_w((camif_cfg->lines_per_frame - 1) << 16 |
-			(camif_cfg->pixels_per_line - 1),
-			vfe_dev->vfe_base + 0x484);
-
+	msm_camera_io_w((camif_cfg->lines_per_frame - 1) << 16 |
+		(camif_cfg->pixels_per_line - 1), vfe_dev->vfe_base + 0x484);
 	if (bus_sub_en) {
 		val = msm_camera_io_r(vfe_dev->vfe_base + 0x47C);
 		val &= 0xFFFFFFDF;
@@ -1444,13 +1424,6 @@ void msm_vfe47_cfg_camif(struct vfe_device *vfe_dev,
 	msm_camera_io_w(first_line << 16 | last_line,
 	vfe_dev->vfe_base + 0x48C);
 
-	/*configure EPOCH0: 20 lines, and
-	* configure EPOCH1: epoch_line1 before EOF
-	*/
-	msm_camera_io_w_mb(0x140000 | epoch_line1,
-		vfe_dev->vfe_base + 0x4A0);
-	pr_debug("%s:%d: epoch_line1: %d\n",
-		__func__, __LINE__, epoch_line1);
 	msm_camera_io_w(((irq_sub_period - 1) << 8) | 0 << 5 |
 		(frame_sub_period - 1), vfe_dev->vfe_base + 0x494);
 	msm_camera_io_w(0xFFFFFFFF, vfe_dev->vfe_base + 0x498);
@@ -1628,7 +1601,7 @@ void msm_vfe47_update_camif_state(struct vfe_device *vfe_dev,
 	val = msm_camera_io_r(vfe_dev->vfe_base + 0x47C);
 	if (update_state == ENABLE_CAMIF) {
 		vfe_dev->hw_info->vfe_ops.irq_ops.config_irq(vfe_dev,
-					0x1F, 0x91,
+					0x15, 0x91,
 					MSM_ISP_IRQ_ENABLE);
 
 		if ((vfe_dev->hvx_cmd > HVX_DISABLE) &&
@@ -1649,6 +1622,8 @@ void msm_vfe47_update_camif_state(struct vfe_device *vfe_dev,
 		msm_camera_io_w(val, vfe_dev->vfe_base + 0x47C);
 		msm_camera_io_w_mb(0x4, vfe_dev->vfe_base + 0x478);
 		msm_camera_io_w_mb(0x1, vfe_dev->vfe_base + 0x478);
+		/* configure EPOCH0 for 20 lines */
+		msm_camera_io_w_mb(0x140000, vfe_dev->vfe_base + 0x4A0);
 		/* testgen GO*/
 		if (vfe_dev->axi_data.src_info[VFE_PIX_0].input_mux == TESTGEN)
 			msm_camera_io_w(1, vfe_dev->vfe_base + 0xC58);
@@ -1914,7 +1889,7 @@ void msm_vfe47_cfg_axi_ub_equal_default(
 
 			rdi_ub_offset = (SRC_TO_INTF(
 					HANDLE_TO_IDX(axi_data->free_wm[i])) -
-					VFE_RAW_0) *
+					VFE_RAW_0 ) *
 					axi_data->hw_info->min_wm_ub * 2;
 			wm_ub_size = axi_data->hw_info->min_wm_ub * 2;
 			msm_camera_io_w(rdi_ub_offset << 16 | (wm_ub_size - 1),
