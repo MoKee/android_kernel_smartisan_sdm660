@@ -592,10 +592,7 @@ static int32_t msm_actuator_move_focus(
 
 	CDBG("called, dir %d, num_steps %d\n", dir, num_steps);
 
-	if ((dest_step_pos == a_ctrl->curr_step_pos) ||
-		((dest_step_pos <= a_ctrl->total_steps) &&
-		(a_ctrl->step_position_table[dest_step_pos] ==
-		a_ctrl->step_position_table[a_ctrl->curr_step_pos])))
+	if (dest_step_pos == a_ctrl->curr_step_pos)
 		return rc;
 
 	if ((sign_dir > MSM_ACTUATOR_MOVE_SIGNED_NEAR) ||
@@ -1572,6 +1569,13 @@ static int msm_actuator_close(struct v4l2_subdev *sd,
 	}
 	kfree(a_ctrl->i2c_reg_tbl);
 	a_ctrl->i2c_reg_tbl = NULL;
+	if (a_ctrl->actuator_state == ACT_OPS_ACTIVE) {
+		rc = msm_actuator_power_down(a_ctrl);
+		if (rc < 0) {
+			pr_err("%s:%d Actuator Power down failed\n",
+				__func__, __LINE__);
+		}
+	}
 	a_ctrl->actuator_state = ACT_DISABLE_STATE;
 	mutex_unlock(a_ctrl->actuator_mutex);
 	CDBG("Exit\n");
