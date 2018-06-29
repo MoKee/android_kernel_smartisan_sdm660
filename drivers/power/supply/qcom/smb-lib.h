@@ -68,6 +68,7 @@ enum print_reason {
 #define OTG_DELAY_VOTER			"OTG_DELAY_VOTER"
 #define USBIN_I_VOTER			"USBIN_I_VOTER"
 #define WEAK_CHARGER_VOTER		"WEAK_CHARGER_VOTER"
+#define OV_VOTER			"OV_VOTER"
 #ifdef CONFIG_VENDOR_SMARTISAN
 #define HIGH_OCV_VOTER			"HIGH_OCV_VOTER"
 #define JEITA_VOTER			"JEITA_VOTER"
@@ -90,6 +91,7 @@ enum {
 	TYPEC_CC2_REMOVAL_WA_BIT	= BIT(2),
 	QC_AUTH_INTERRUPT_WA_BIT	= BIT(3),
 	OTG_WA				= BIT(4),
+	OV_IRQ_WA_BIT			= BIT(5),
 };
 
 enum smb_irq_index {
