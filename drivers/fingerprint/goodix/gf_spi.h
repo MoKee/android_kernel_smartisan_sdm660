@@ -137,6 +137,7 @@ struct gf_dev {
 	struct notifier_block notifier;
 	char device_available;
 	char fb_black;
+	bool suspended;
 };
 
 int vreg_setup(struct gf_dev *gf_dev, const char *name, bool enable);

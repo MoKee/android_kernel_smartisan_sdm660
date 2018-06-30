@@ -41,6 +41,7 @@
 #include <linux/pm_qos.h>
 #include <linux/cpufreq.h>
 #include <linux/wakelock.h>
+#include <linux/proc_fs.h>
 #include "gf_spi.h"
 
 #if defined(USE_SPI_BUS)
@@ -671,6 +672,7 @@ static int goodix_fb_state_chg_callback(struct notifier_block *nb,
 					kill_fasync(&gf_dev->async, SIGIO, POLL_IN);
 				}
 #endif
+				gf_enable_irq(gf_dev);
 			}
 			break;
 		default:
@@ -685,6 +687,50 @@ static struct notifier_block goodix_noti_block = {
 	.notifier_call = goodix_fb_state_chg_callback,
 };
 
+static ssize_t set_suspend(struct file *file,
+		const char __user *buf, size_t count, loff_t *lo)
+{
+	struct gf_dev *gf_dev = &gf;
+	char page[10] = {0};
+	int rc, val;
+
+	rc = copy_from_user(page, buf, count);
+	if (rc) {
+		return -EINVAL;
+	}
+
+	sscanf(page, "%d", &val);
+	gf_dev->suspended = !!val;
+
+	if (gf_dev->fb_black) {
+		if (val) {
+			gf_disable_irq(gf_dev);
+		} else {
+			gf_enable_irq(gf_dev);
+		}
+	}
+
+	return count;
+}
+
+static ssize_t get_suspend(struct file *file,
+		char __user *buf, size_t count, loff_t *lo)
+{
+	struct gf_dev *gf_dev = &gf;
+	char page[10];
+
+	sprintf(page, "%d\n", gf_dev->suspended ? 1 : 0);
+
+	return simple_read_from_buffer(buf, count, lo, page, strlen(page));
+}
+
+static const struct file_operations proc_suspend = {
+	.write = set_suspend,
+	.read = get_suspend,
+	.open = simple_open,
+	.owner = THIS_MODULE,
+};
+
 static struct class *gf_class;
 #if defined(USE_SPI_BUS)
 static int gf_probe(struct spi_device *spi)
@@ -693,6 +739,7 @@ static int gf_probe(struct platform_device *pdev)
 #endif
 {
 	struct gf_dev *gf_dev = &gf;
+	struct proc_dir_entry *procdir;
 	int status = -EINVAL;
 	unsigned long minor;
 	int i;
@@ -775,6 +822,9 @@ static int gf_probe(struct platform_device *pdev)
 	//gf_parse_dts(gf_dev);
 	vreg_setup(gf_dev, "vdd_io", 1);
 	pr_info("version V%d.%d.%02d\n", VER_MAJOR, VER_MINOR, PATCH_LEVEL);
+
+	procdir = proc_mkdir("fingerprint", NULL);
+	proc_create_data("suspend", S_IWUSR, procdir, &proc_suspend, NULL);
 
 	return status;
 
