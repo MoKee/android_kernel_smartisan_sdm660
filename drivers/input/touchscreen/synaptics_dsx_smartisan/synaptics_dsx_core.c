@@ -56,10 +56,6 @@
 #define TYPE_B_PROTOCOL
 #endif
 
-/*
-#define USE_DATA_SERVER
-*/
-
 #define WAKEUP_GESTURE false
 
 #define NO_0D_WHILE_2D
@@ -178,11 +174,6 @@ static ssize_t synaptics_rmi4_wake_gesture_show(struct device *dev,
 
 static ssize_t synaptics_rmi4_wake_gesture_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count);
-
-#ifdef USE_DATA_SERVER
-static ssize_t synaptics_rmi4_synad_pid_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count);
-#endif
 
 static ssize_t synaptics_rmi4_virtual_key_map_show(struct kobject *kobj,
 		struct kobj_attribute *attr, char *buf);
@@ -685,12 +676,6 @@ static struct synaptics_rmi4_exp_fn_data exp_data;
 
 static struct synaptics_dsx_button_map *vir_button_map;
 
-#ifdef USE_DATA_SERVER
-static pid_t synad_pid;
-static struct task_struct *synad_task;
-static struct siginfo interrupt_signal;
-#endif
-
 static struct device_attribute attrs[] = {
 	__ATTR(reset, (S_IWUSR | S_IWGRP),
 			synaptics_rmi4_show_error,
@@ -713,11 +698,6 @@ static struct device_attribute attrs[] = {
 	__ATTR(wake_gesture, (S_IRUGO | S_IWUSR | S_IWGRP),
 			synaptics_rmi4_wake_gesture_show,
 			synaptics_rmi4_wake_gesture_store),
-#ifdef USE_DATA_SERVER
-	__ATTR(synad_pid, (S_IWUSR | S_IWGRP),
-			synaptics_rmi4_show_error,
-			synaptics_rmi4_synad_pid_store),
-#endif
 };
 
 static struct kobj_attribute virtual_key_map_attr = {
@@ -912,27 +892,6 @@ static ssize_t synaptics_rmi4_wake_gesture_store(struct device *dev,
 
 	return count;
 }
-
-#ifdef USE_DATA_SERVER
-static ssize_t synaptics_rmi4_synad_pid_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	unsigned int input;
-
-	if (sscanf(buf, "%u", &input) != 1)
-		return -EINVAL;
-
-	synad_pid = input;
-
-	if (synad_pid) {
-		synad_task = pid_task(find_vpid(synad_pid), PIDTYPE_PID);
-		if (!synad_task)
-			return -EINVAL;
-	}
-
-	return count;
-}
-#endif
 
 static ssize_t synaptics_rmi4_virtual_key_map_show(struct kobject *kobj,
 		struct kobj_attribute *attr, char *buf)
@@ -1674,12 +1633,6 @@ static void synaptics_rmi4_report_touch(struct synaptics_rmi4_data *rmi4_data,
 	case SYNAPTICS_RMI4_F1A:
 		synaptics_rmi4_f1a_report(rmi4_data, fhandler);
 		break;
-#ifdef USE_DATA_SERVER
-	case SYNAPTICS_RMI4_F21:
-		if (synad_pid)
-			send_sig_info(SIGIO, &interrupt_signal, synad_task);
-		break;
-#endif
 	default:
 		break;
 	}
@@ -3192,29 +3145,6 @@ rescan_pdt:
 #endif
 				}
 				break;
-#ifdef USE_DATA_SERVER
-			case SYNAPTICS_RMI4_F21:
-				if (rmi_fd.intr_src_count == 0)
-					break;
-
-				retval = synaptics_rmi4_alloc_fh(&fhandler,
-						&rmi_fd, page_number);
-				if (retval < 0) {
-					dev_err(rmi4_data->pdev->dev.parent,
-							"%s: Failed to alloc for F%d\n",
-							__func__,
-							rmi_fd.fn_number);
-					return retval;
-				}
-
-				fhandler->fn_number = rmi_fd.fn_number;
-				fhandler->num_of_data_sources =
-						rmi_fd.intr_src_count;
-
-				synaptics_rmi4_set_intr_mask(fhandler, &rmi_fd,
-						intr_count);
-				break;
-#endif
 			case SYNAPTICS_RMI4_F35:
 				f35found = true;
 				break;
@@ -4321,12 +4251,6 @@ static int synaptics_rmi4_probe(struct platform_device *pdev)
 			goto err_sysfs;
 		}
 	}
-
-#ifdef USE_DATA_SERVER
-	memset(&interrupt_signal, 0, sizeof(interrupt_signal));
-	interrupt_signal.si_signo = SIGIO;
-	interrupt_signal.si_code = SI_USER;
-#endif
 
 	rmi4_data->rb_workqueue =
 			create_singlethread_workqueue("dsx_rebuild_workqueue");
