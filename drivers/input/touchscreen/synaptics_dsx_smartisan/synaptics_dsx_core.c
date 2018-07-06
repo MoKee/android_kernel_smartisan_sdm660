@@ -1652,7 +1652,6 @@ static void synaptics_rmi4_sensor_report(struct synaptics_rmi4_data *rmi4_data,
 	struct synaptics_rmi4_exp_fhandler *exp_fhandler;
 	struct synaptics_rmi4_device_info *rmi;
 
-	dev_dbg(rmi4_data->pdev->dev.parent, "%s in\n", __func__);
 	rmi = &(rmi4_data->rmi4_mod_info);
 
 	/*
@@ -1704,8 +1703,6 @@ static void synaptics_rmi4_sensor_report(struct synaptics_rmi4_data *rmi4_data,
 	if (!report)
 		return;
 
-	dev_dbg(rmi4_data->pdev->dev.parent, "%s: prepare reporting\n", __func__);
-
 	/*
 	 * Traverse the function handler list and service the source(s)
 	 * of the interrupt accordingly.
@@ -1742,12 +1739,8 @@ static irqreturn_t synaptics_rmi4_irq(int irq, void *data)
 	const struct synaptics_dsx_board_data *bdata =
 			rmi4_data->hw_if->board_data;
 
-	dev_dbg(rmi4_data->pdev->dev.parent, "%s in\n", __func__);
-
-	if (gpio_get_value(bdata->irq_gpio) != bdata->irq_on_state) {
-		dev_err(rmi4_data->pdev->dev.parent, "%s irq gpio state is fault, return\n", __func__);
+	if (gpio_get_value(bdata->irq_gpio) != bdata->irq_on_state)
 		goto exit;
-	}
 
 	rmi4_data->timestamp = ktime_get();
 
@@ -1808,12 +1801,8 @@ static int synaptics_rmi4_irq_enable(struct synaptics_rmi4_data *rmi4_data,
 	}
 
 	if (enable) {
-		if (rmi4_data->irq_enabled) {
-			dev_err(rmi4_data->pdev->dev.parent,
-					"%s: Interrupt already enabled\n",
-					__func__);
+		if (rmi4_data->irq_enabled)
 			goto exit;
-		}
 
 		retval = synaptics_rmi4_int_enable(rmi4_data, false);
 		if (retval < 0)
