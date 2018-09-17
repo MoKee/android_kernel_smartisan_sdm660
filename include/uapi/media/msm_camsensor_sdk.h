@@ -58,6 +58,8 @@
 #define MSM_EEPROM_MAX_WRITE_MAP_CNT    8
 #endif
 
+#define FRONT_AUX_SENSOR_SUPPORT
+
 enum msm_sensor_camera_id_t {
 	CAMERA_0,
 	CAMERA_1,
@@ -78,6 +80,7 @@ enum camb_position_t {
 	BACK_CAMERA_B,
 	FRONT_CAMERA_B,
 	AUX_CAMERA_B = 0x100,
+	FRONT_AUX_CAMERA_B,
 	INVALID_CAMERA_B,
 };
 
