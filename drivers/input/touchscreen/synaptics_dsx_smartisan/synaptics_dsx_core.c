@@ -955,6 +955,10 @@ static ssize_t synaptics_rmi4_virtual_key_map_show(struct kobject *kobj,
 	return count;
 }
 
+static bool synaptics_rmi4_should_ignore(int x, int y) {
+	return (y >= 2040) && (x <= 80 || x >= 1000);
+}
+
 static void synaptics_rmi4_f11_wg(struct synaptics_rmi4_data *rmi4_data,
 		bool enable)
 {
@@ -1181,6 +1185,15 @@ static int synaptics_rmi4_f11_abs_report(struct synaptics_rmi4_data *rmi4_data,
 			if (rmi4_data->hw_if->board_data->y_flip)
 				y = rmi4_data->sensor_max_y - y;
 
+			if (synaptics_rmi4_should_ignore(x, y)) {
+#ifdef TYPE_B_PROTOCOL
+				input_mt_slot(rmi4_data->input_dev, finger);
+				input_mt_report_slot_state(rmi4_data->input_dev,
+						MT_TOOL_FINGER, 0);
+#endif
+				continue;
+			}
+
 			input_report_key(rmi4_data->input_dev,
 					BTN_TOUCH, 1);
 			input_report_abs(rmi4_data->input_dev,
@@ -1383,6 +1396,15 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 			x = rmi4_data->sensor_max_x - x;
 		if (rmi4_data->hw_if->board_data->y_flip)
 			y = rmi4_data->sensor_max_y - y;
+
+		if (synaptics_rmi4_should_ignore(x, y)) {
+#ifdef TYPE_B_PROTOCOL
+			input_mt_slot(rmi4_data->input_dev, finger);
+			input_mt_report_slot_state(rmi4_data->input_dev,
+					MT_TOOL_FINGER, 0);
+#endif
+			continue;
+		}
 
 		switch (finger_status) {
 		case F12_FINGER_STATUS:
