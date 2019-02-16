@@ -1,0 +1,4 @@
+{
+  "pushCert": "certificate version 0.1\npusher 2ECD2531 1550295962 +0800\npushee ssh://mokeedev.review:29418/MoKee/android_kernel_smartisan_sdm660\nnonce 1550295962-3FB9A722AF4CDFB536A6AAAB96C4FDE40FF62A38\n\n0000000000000000000000000000000000000000 90c5be2551a5d76ebf1fddf11611f3320555eec1 refs/for/mkp\n-----BEGIN PGP SIGNATURE-----\nVersion: GnuPG v1\n\niQEcBAABAgAGBQJcZ6OaAAoJEPIi9OYuzSUxVu4H/ifdahg/bNdqFBlADzrQtN4P\neDvFoDHj9d9PABzGIyUQx9aVRjJ0Cfx7/K1Ip+d7D8dENGEBFNQrvPiUcrljJVIh\nF5xhGGwRhl5m3MvWhX4IvtjCmnseJt4ZgTbMGiB+EjuCJue0o1WynyIRk1x+V74J\nKRJ94iTCM/dWA30S3Hm30RU7hPCPiWMIIlOqa6tHMtz9BgpRJh6reOmkGsEWL7pD\ntJup1dOsxpy7chP3jOJk4l1l0O8WK0E1AVQqVkwy2kwKzoDjwx1f2bVzDPlQt/BH\npqcSmAjma6yff25u062KpgasWK5WN3+KTRmiDwMtn4hKq7KK6U5xa86RIsIMLAE\u003d\n\u003dfPzF\n-----END PGP SIGNATURE-----\n",
+  "comments": []
+}
