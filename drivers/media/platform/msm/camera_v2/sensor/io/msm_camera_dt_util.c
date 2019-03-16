@@ -575,10 +575,8 @@ int msm_camera_get_dt_power_setting_data(struct device_node *of_node,
 				ps[i].seq_val = SENSOR_GPIO_CUSTOM1;
 			else if (!strcmp(seq_name, "sensor_gpio_custom2"))
 				ps[i].seq_val = SENSOR_GPIO_CUSTOM2;
-#ifndef CONFIG_VENDOR_SMARTISAN
 			else if (!strcmp(seq_name, "sensor_gpio_custom3"))
 				ps[i].seq_val = SENSOR_GPIO_CUSTOM3;
-#endif
 			else
 				rc = -EILSEQ;
 			break;
@@ -1082,7 +1080,6 @@ int msm_camera_init_gpio_pin_tbl(struct device_node *of_node,
 		rc = 0;
 	}
 
-#ifndef CONFIG_VENDOR_SMARTISAN
 	rc = of_property_read_u32(of_node, "qcom,gpio-custom3", &val);
 	if (rc != -EINVAL) {
 		if (rc < 0) {
@@ -1103,7 +1100,6 @@ int msm_camera_init_gpio_pin_tbl(struct device_node *of_node,
 	} else {
 		rc = 0;
 	}
-#endif
 
 	return rc;
 
@@ -1526,8 +1522,6 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 					__func__, __LINE__,
 					power_setting->seq_val, ctrl->num_vreg);
 
-//lijiankun: delete below code to avoid enable the gpio correspording to regulator
-#ifndef CONFIG_VENDOR_SMARTISAN
 			rc = msm_cam_sensor_handle_reg_gpio(
 				power_setting->seq_val,
 				ctrl->gpio_conf, 1);
@@ -1536,7 +1530,6 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 					__func__);
 				goto power_up_failed;
 			}
-#endif
 			break;
 		case SENSOR_I2C_MUX:
 			if (ctrl->i2c_conf && ctrl->i2c_conf->use_i2c_mux)
@@ -1595,11 +1588,8 @@ power_up_failed:
 					__func__, __LINE__,
 					power_setting->seq_val, ctrl->num_vreg);
 
-//lijiankun: delete below code to avoid enable the gpio correspording to regulator
-#ifndef CONFIG_VENDOR_SMARTISAN
 			msm_cam_sensor_handle_reg_gpio(power_setting->seq_val,
 				ctrl->gpio_conf, GPIOF_OUT_INIT_LOW);
-#endif
 			break;
 		case SENSOR_I2C_MUX:
 			if (ctrl->i2c_conf && ctrl->i2c_conf->use_i2c_mux)
@@ -1725,14 +1715,11 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 			} else
 				pr_err("%s error in power up/down seq data\n",
 								__func__);
-//lijiankun: delete below code to avoid enable the gpio correspording to regulator
-#ifndef CONFIG_VENDOR_SMARTISAN
 			ret = msm_cam_sensor_handle_reg_gpio(pd->seq_val,
 				ctrl->gpio_conf, GPIOF_OUT_INIT_LOW);
 			if (ret < 0)
 				pr_err("ERR:%s Error while disabling VREG GPIO\n",
 					__func__);
-#endif
 			break;
 		case SENSOR_I2C_MUX:
 			if (ctrl->i2c_conf && ctrl->i2c_conf->use_i2c_mux)
