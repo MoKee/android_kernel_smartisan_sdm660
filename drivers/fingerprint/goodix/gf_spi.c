@@ -872,7 +872,7 @@ static int __init gf_init(void)
 	pr_warn("%s Tfp fingerprint_id = *%s*\n", __func__, fingerprint_id);
 	if (strcmp(fingerprint_id, "goodix")) {
 		pr_err(" %s error, fingerprint_id = %s \n", __func__, fingerprint_id);
-		//return -1;
+		return -1;
 	}
 
 	/* Claim our 256 reserved device numbers.  Then register a class
