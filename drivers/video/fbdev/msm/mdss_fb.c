@@ -97,7 +97,6 @@ static u32 mdss_fb_pseudo_palette[16] = {
 
 #ifdef CONFIG_VENDOR_SMARTISAN
 extern int lcd_id;
-int brightnes_set_value = 0;
 #endif
 
 static struct msm_mdp_interface *mdp_instance;
