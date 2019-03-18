@@ -96,7 +96,16 @@ static u32 mdss_fb_pseudo_palette[16] = {
 };
 
 #ifdef CONFIG_VENDOR_SMARTISAN
+static int ie_set_boot = 0;
+static int show_ie_level = 0;
+
 extern int lcd_id;
+
+int sre_mode;
+int is_eye_care_mode = 0;
+int glove_open = -1;
+
+extern void mdss_dsi_panel_ie_level_setting(struct mdss_panel_data *pdata, int level);
 #endif
 
 static struct msm_mdp_interface *mdp_instance;
@@ -847,6 +856,44 @@ static ssize_t mdss_fb_get_dfps_mode(struct device *dev,
 }
 
 #ifdef CONFIG_VENDOR_SMARTISAN
+static ssize_t mdss_fb_set_ie_level(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t len)
+{
+	struct fb_info *fbi = dev_get_drvdata(dev);
+	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
+	struct mdss_panel_data *pdata;
+	u32 ie_level;
+
+	pdata = dev_get_platdata(&mfd->pdev->dev);
+	if (!pdata) {
+		pr_err("no panel connected!\n");
+		return len;
+	}
+
+	if (sscanf(buf, "%d", &ie_level) != 1) {
+		pr_err("sccanf buf error!\n");
+		return len;
+	}
+
+	if (mfd->panel_power_state != 0)
+		mdss_dsi_panel_ie_level_setting(pdata, ie_level);
+	else
+		ie_set_boot = 0;
+
+	show_ie_level = ie_level;
+	return len;
+}
+
+static ssize_t mdss_fb_get_ie_level(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int ret;
+
+	ret = scnprintf(buf, PAGE_SIZE, "%d\n", sre_mode);
+
+	return ret;
+}
+
 static ssize_t mdss_fb_get_panelid(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -992,6 +1039,8 @@ static DEVICE_ATTR(msm_fb_persist_mode, S_IRUGO | S_IWUSR,
 	mdss_fb_get_persist_mode, mdss_fb_change_persist_mode);
 static DEVICE_ATTR(idle_power_collapse, S_IRUGO, mdss_fb_idle_pc_notify, NULL);
 #ifdef CONFIG_VENDOR_SMARTISAN
+static DEVICE_ATTR(msm_fb_ie_level, S_IRUGO | S_IWUSR,
+	mdss_fb_get_ie_level, mdss_fb_set_ie_level);
 static DEVICE_ATTR(show_panel_id, S_IRUGO , mdss_fb_get_panelid, NULL);
 static DEVICE_ATTR(show_panel_regid, S_IRUGO , mdss_fb_get_panel_regid, NULL);
 #endif
@@ -1011,6 +1060,7 @@ static struct attribute *mdss_fb_attrs[] = {
 	&dev_attr_msm_fb_persist_mode.attr,
 	&dev_attr_idle_power_collapse.attr,
 #ifdef CONFIG_VENDOR_SMARTISAN
+	&dev_attr_msm_fb_ie_level.attr,
 	&dev_attr_show_panel_id.attr,
 	&dev_attr_show_panel_regid.attr,
 #endif
@@ -1844,6 +1894,19 @@ void mdss_fb_update_backlight(struct msm_fb_data_type *mfd)
 			if (mfd->mdp.ad_calc_bl)
 				(*mfd->mdp.ad_calc_bl)(mfd, temp, &temp,
 								&bl_notify);
+#ifdef CONFIG_VENDOR_SMARTISAN
+			if (ie_set_boot < 1) {
+				pr_info("show_ie_level is %d\n", show_ie_level);
+				ie_set_boot++;
+				if (show_ie_level != 18)
+					mdss_dsi_panel_ie_level_setting(pdata, show_ie_level);
+			} else {
+				if (glove_open == 1)
+					mdss_dsi_panel_ie_level_setting(pdata, 261);
+				else if (glove_open == 0)
+					mdss_dsi_panel_ie_level_setting(pdata, 260);
+			}
+#endif
 			if (bl_notify)
 				mdss_fb_bl_update_notify(mfd,
 					NOTIFY_TYPE_BL_AD_ATTEN_UPDATE);
