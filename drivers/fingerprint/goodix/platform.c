@@ -33,7 +33,7 @@ int vreg_setup(struct gf_dev *gf_dev, const char *name,
 	bool enable)
 {
 	int rc;
-	struct regulator *vreg;
+	struct regulator *vreg = NULL;
 	struct device *dev = &gf_dev->spi->dev;
 	//return 0;
 
